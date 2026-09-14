@@ -321,6 +321,9 @@ function renderStatus(status) {
   document.getElementById('stat-email').textContent = status.email || 'not set';
   document.getElementById('stat-csv').textContent = String(status.connectionsCount ?? 0);
   document.getElementById('stat-sales').textContent = String(status.salesCount ?? 0);
+  document.getElementById('stat-unrequited').textContent = String(
+    status.unrequitedCount ?? 0
+  );
   document.getElementById('stat-job').textContent = status.job ? status.job.name : 'idle';
   if (status.email && !emailEl.value) {
     emailEl.value = status.email;
@@ -328,6 +331,7 @@ function renderStatus(status) {
   const busy = Boolean(status.job);
   const analyticsRunning = Boolean(status.job && status.job.name === 'analytics');
   document.getElementById('start-download').disabled = busy;
+  document.getElementById('start-inbox-scan').disabled = busy;
   document.getElementById('start-analytics').disabled = busy;
   document.getElementById('start-dry').disabled = busy;
   document.getElementById('start-execute').disabled = busy;
@@ -368,6 +372,20 @@ document.getElementById('start-download').addEventListener('click', async () => 
       months: document.getElementById('months').value,
       limit: document.getElementById('dl-limit').value,
       fresh: document.getElementById('fresh').checked,
+    });
+  } catch (err) {
+    appendLog(err.stack || err.message);
+  }
+});
+
+document.getElementById('start-inbox-scan').addEventListener('click', async () => {
+  scrollJobsIntoView();
+  try {
+    await postJson('/api/jobs/inbox-scan', {
+      password: password(),
+      days: document.getElementById('inbox-days').value,
+      limit: document.getElementById('inbox-limit').value,
+      fresh: document.getElementById('inbox-fresh').checked,
     });
   } catch (err) {
     appendLog(err.stack || err.message);

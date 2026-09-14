@@ -31,6 +31,7 @@
       <div class="stat" tabindex="0" data-tooltip="The LinkedIn account email currently stored in the local .env file. Your password is never stored here."><strong id="stat-email">—</strong><span>Email in .env</span></div>
       <div class="stat" tabindex="0" data-tooltip="The number of connection records in the local master connections.csv file, including records marked as disconnected."><strong id="stat-csv">0</strong><span>connections.csv</span></div>
       <div class="stat" tabindex="0" data-tooltip="The number of title-classified records in sales-connections.csv from the optional sales and recruitment search."><strong id="stat-sales">0</strong><span>sales-connections.csv</span></div>
+      <div class="stat" tabindex="0" data-tooltip="The number of connections who messaged you in an inbox thread where you never replied."><strong id="stat-unrequited">0</strong><span>unrequited-love.csv</span></div>
       <div class="stat" tabindex="0" data-tooltip="Shows idle when nothing is running, or the name of the active download, analytics or removal job. Only one job runs at a time."><strong id="stat-job">idle</strong><span>Current job</span></div>
     </section>
 
@@ -71,12 +72,26 @@
       </section>
 
       <section class="card">
+        <h2>Inbox scan</h2>
+        <p>Find connections who messaged you in a thread where you never replied.</p>
+        <label>Days back
+          <input id="inbox-days" type="number" min="1" value="30" data-tooltip="Only scan connection conversations whose latest activity is within this many days.">
+        </label>
+        <label>Limit threads <span class="hint">(optional)</span>
+          <input id="inbox-limit" type="number" min="1" placeholder="all" data-tooltip="Maximum number of unscanned conversations to open in this run. Leave blank for every conversation in the date window.">
+        </label>
+        <label class="check" data-tooltip="Back up and reset inbox scan state and unrequited-love.csv before scanning."><input id="inbox-fresh" type="checkbox"> Fresh CSV and state</label>
+        <button type="button" id="start-inbox-scan" class="primary" data-tooltip="Open LinkedIn Messaging, select Connections, load every conversation in the date window, and inspect each full thread.">Scan inbox</button>
+      </section>
+
+      <section class="card">
         <h2>Remove <a class="card-help" href="/docs/readme.html#dive-remove" target="_blank" rel="noopener" data-tooltip="Jump to the safety notes and detailed removal workflow in the local guide.">Explain this</a></h2>
         <p>Always dry-run first. Execute is a separate action.</p>
         <label>CSV
           <select id="csv-source" data-tooltip="Choose the source list. connections.csv is the master download; sales-connections.csv contains contacts classified by the optional title search.">
             <option value="connections">connections.csv</option>
             <option value="sales">sales-connections.csv</option>
+            <option value="unrequited">unrequited-love.csv</option>
           </select>
         </label>
         <label>Status

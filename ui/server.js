@@ -13,6 +13,7 @@ const PORT = Number(process.env.UI_PORT) || 3847;
 const ENV_PATH = path.join(ROOT, '.env');
 const CONNECTIONS_CSV = path.join(ROOT, 'connections.csv');
 const SALES_CSV = path.join(ROOT, 'sales-connections.csv');
+const UNREQUITED_CSV = path.join(ROOT, 'unrequited-love.csv');
 const ANALYTICS_HTML = path.join(ROOT, 'connections-analytics.html');
 
 const MAX_LOG_LINES = 4000;
@@ -115,6 +116,7 @@ function statusPayload() {
     email: readEmailFromEnv(),
     connectionsCount: csvRowCount(CONNECTIONS_CSV),
     salesCount: csvRowCount(SALES_CSV),
+    unrequitedCount: csvRowCount(UNREQUITED_CSV),
     analyticsExists: fs.existsSync(ANALYTICS_HTML),
     job: jobSnapshot(),
     history: jobHistory,
@@ -308,6 +310,39 @@ app.post('/api/jobs/analytics', (req, res) => {
   }
 });
 
+app.post('/api/jobs/inbox-scan', (req, res) => {
+  try {
+    const body = req.body || {};
+    const days = parsePositiveInt(body.days, '--days') || 30;
+    const args = [
+      path.join(ROOT, 'scan-inbox.js'),
+      '--days',
+      String(days),
+    ];
+    const detailParts = [`last ${days} day${days === 1 ? '' : 's'}`];
+    const limit = parsePositiveInt(body.limit, '--limit');
+    if (limit) {
+      args.push('--limit', String(limit));
+      detailParts.push(`limit ${limit.toLocaleString()} threads`);
+    }
+    if (body.fresh) {
+      args.push('--fresh');
+      detailParts.push('fresh CSV and state');
+    }
+    const job = startJob({
+      name: 'inbox-scan',
+      label: 'Scan inbox',
+      detail: detailParts.join(' · '),
+      args,
+      password: body.password,
+    });
+    res.json({ ok: true, job });
+  } catch (err) {
+    console.error(err.stack || err.message);
+    res.status(err.statusCode || 400).json({ error: err.message });
+  }
+});
+
 app.post('/api/jobs/remove', (req, res) => {
   try {
     const body = req.body || {};
@@ -315,7 +350,12 @@ app.post('/api/jobs/remove', (req, res) => {
       throw new Error('Set confirm: true to execute removals.');
     }
     const args = [path.join(ROOT, 'remove-connections.js')];
-    const csvChoice = body.csv === 'sales' ? SALES_CSV : CONNECTIONS_CSV;
+    const csvFiles = {
+      connections: CONNECTIONS_CSV,
+      sales: SALES_CSV,
+      unrequited: UNREQUITED_CSV,
+    };
+    const csvChoice = csvFiles[body.csv] || CONNECTIONS_CSV;
     args.push('--csv', csvChoice);
     if (body.execute) {
       args.push('--execute');
