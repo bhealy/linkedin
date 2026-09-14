@@ -121,7 +121,7 @@
       <div class="jobs-head">
         <div>
           <h2 id="jobs-title">Jobs</h2>
-          <p>Live status and the last 10 jobs from this dashboard session.</p>
+          <p>Live status appears in a window while a job runs. Recent jobs stay here.</p>
         </div>
         <span id="jobs-summary" class="status-pill idle">Idle</span>
       </div>
@@ -144,6 +144,37 @@
   </main>
 
   <div id="tooltip" class="tooltip" role="tooltip" hidden></div>
+
+  <div id="job-modal" class="modal" hidden>
+    <div class="modal-backdrop" data-modal-ignore></div>
+    <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="job-modal-title">
+      <div class="jobs-head">
+        <div>
+          <h2 id="job-modal-title">Jobs</h2>
+          <p>Live status for the job running now.</p>
+        </div>
+        <span id="job-modal-pill" class="status-pill running">Running</span>
+      </div>
+      <div id="job-modal-body" class="current-job"></div>
+      <div class="row modal-actions">
+        <button type="button" id="job-modal-cancel" class="danger" data-tooltip="Ask the currently running child process to stop. Any CSV and progress already written are retained so supported jobs can resume.">Cancel job</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="success-modal" class="modal" hidden>
+    <div class="modal-backdrop" id="success-backdrop"></div>
+    <div class="modal-panel success-panel" role="dialog" aria-modal="true" aria-labelledby="success-title">
+      <span class="status-pill succeeded" id="success-pill">Succeeded</span>
+      <h2 id="success-title">Download complete</h2>
+      <p class="job-detail" id="success-detail"></p>
+      <dl id="success-stats" class="stat-list"></dl>
+      <div class="row modal-actions">
+        <button type="button" id="success-close" class="primary">Close</button>
+      </div>
+    </div>
+  </div>
+
   <script src="app.js"></script>
 </body>
 </html>

@@ -41,6 +41,12 @@ function appendLog(text) {
     if (logLines.length > MAX_LOG_LINES) {
       logLines.splice(0, logLines.length - MAX_LOG_LINES);
     }
+    if (currentJob) {
+      currentJob.log.push(line);
+      if (currentJob.log.length > 800) {
+        currentJob.log.splice(0, currentJob.log.length - 800);
+      }
+    }
     broadcast({ type: 'log', line });
     if (currentJob && line.trim() && !line.startsWith('──')) {
       currentJob.statusLine = line.trim();
@@ -92,6 +98,66 @@ function upsertEmail(email) {
   fs.writeFileSync(ENV_PATH, text, 'utf8');
   process.env.LINKEDIN_EMAIL = value;
   return value;
+}
+
+function pickLog(log, pattern) {
+  for (let i = log.length - 1; i >= 0; i -= 1) {
+    const match = log[i].match(pattern);
+    if (match) {
+      return match;
+    }
+  }
+  return null;
+}
+
+function summariseJob(job) {
+  const log = job.log || [];
+  const summary = { title: job.label || job.name, rows: [] };
+
+  if (job.name === 'download') {
+    const saved = pickLog(log, /Saved in CSV:\s+([0-9,]+)/i);
+    const added = pickLog(log, /New this run:\s+([0-9,]+)/i);
+    const window = pickLog(log, /Date window:\s+(.+)/i);
+    const output = pickLog(log, /Output file:\s+(.+)/i);
+    if (saved) summary.rows.push({ label: 'Saved in CSV', value: `${saved[1]} connections` });
+    if (added) summary.rows.push({ label: 'New this run', value: `${added[1]} connections` });
+    if (window) summary.rows.push({ label: 'Date window', value: window[1].trim() });
+    if (output) summary.rows.push({ label: 'Output file', value: output[1].trim() });
+    if (log.some((line) => /Finished the last-/.test(line))) {
+      summary.rows.push({ label: 'Result', value: 'Reached the date window cutoff' });
+    } else if (log.some((line) => /All connections have been downloaded/.test(line))) {
+      summary.rows.push({ label: 'Result', value: 'Full connections list downloaded' });
+    } else if (log.some((line) => /reached the .+new limit/.test(line))) {
+      summary.rows.push({ label: 'Result', value: 'Stopped at the per-run limit — run again to continue' });
+    }
+    return summary;
+  }
+
+  if (job.name === 'analytics') {
+    const analysed = pickLog(log, /Analysed ([0-9,]+) connection/i);
+    const written = pickLog(log, /Analytics page written to:\s+(.+)/i);
+    if (analysed) summary.rows.push({ label: 'Connections analysed', value: analysed[1] });
+    if (written) summary.rows.push({ label: 'Report', value: written[1].trim() });
+    return summary;
+  }
+
+  if (job.name === 'remove-dry-run' || job.name === 'remove-execute') {
+    const loaded = pickLog(log, /Loaded ([0-9,]+) pending target/i);
+    const removed = pickLog(log, /Removed ([0-9,/]+) connections/i);
+    const keywords = pickLog(log, /Title keywords \(match any\):\s+(.+)/i);
+    if (loaded) summary.rows.push({ label: 'Pending targets', value: loaded[1] });
+    if (keywords) summary.rows.push({ label: 'Keywords', value: keywords[1].trim() });
+    if (removed) summary.rows.push({ label: 'Removed', value: removed[1] });
+    if (job.name === 'remove-dry-run') {
+      summary.rows.push({ label: 'Mode', value: 'Dry run — nothing was removed' });
+    }
+    return summary;
+  }
+
+  if (job.statusLine) {
+    summary.rows.push({ label: 'Last update', value: job.statusLine });
+  }
+  return summary;
 }
 
 function jobSnapshot() {
@@ -169,6 +235,7 @@ function startJob({ name, label, detail, args, password }) {
     startedAt: new Date().toISOString(),
     statusLine: 'Starting process…',
     state: 'running',
+    log: [],
     child,
   };
   currentJob = job;
@@ -199,6 +266,7 @@ function startJob({ name, label, detail, args, password }) {
       outcome,
       exitCode: code,
       signal: signal || null,
+      summary: summariseJob(job),
     };
     jobHistory.unshift(completed);
     jobHistory.splice(MAX_JOB_HISTORY);

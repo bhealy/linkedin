@@ -249,6 +249,113 @@ function textElement(tag, className, text) {
   return el;
 }
 
+function jobBodyFragment(job) {
+  const elapsed = Date.now() - new Date(job.startedAt).getTime();
+  const wrap = document.createDocumentFragment();
+  wrap.append(
+    textElement('div', 'job-name', job.label || job.name),
+    textElement('p', 'job-detail', job.detail || ''),
+    textElement('p', 'job-stage', job.statusLine || 'Starting…'),
+    textElement(
+      'p',
+      'job-meta',
+      `Started ${formatTime(job.startedAt)} · running for ${formatDuration(elapsed)}`
+    )
+  );
+  return wrap;
+}
+
+function setModalsScrollLock() {
+  const jobOpen = !document.getElementById('job-modal').hidden;
+  const successOpen = !document.getElementById('success-modal').hidden;
+  document.body.style.overflow = jobOpen || successOpen ? 'hidden' : '';
+}
+
+function showRunningModal(job) {
+  const modal = document.getElementById('job-modal');
+  const body = document.getElementById('job-modal-body');
+  const pill = document.getElementById('job-modal-pill');
+  body.replaceChildren(jobBodyFragment(job));
+  pill.className = 'status-pill running';
+  pill.textContent =
+    job.state === 'cancelling' || job.state === 'stopping' ? 'Stopping' : 'Running';
+  modal.hidden = false;
+  setModalsScrollLock();
+}
+
+function hideRunningModal() {
+  document.getElementById('job-modal').hidden = true;
+  setModalsScrollLock();
+}
+
+function parseDownloadSummaryFromLog(text) {
+  const rows = [];
+  const saved = text.match(/Saved in CSV:\s+([0-9,]+)/i);
+  const added = text.match(/New this run:\s+([0-9,]+)/i);
+  const window = text.match(/Date window:\s+(.+)/i);
+  const output = text.match(/Output file:\s+(.+)/i);
+  if (saved) rows.push({ label: 'Saved in CSV', value: `${saved[1]} connections` });
+  if (added) rows.push({ label: 'New this run', value: `${added[1]} connections` });
+  if (window) rows.push({ label: 'Date window', value: window[1].trim() });
+  if (output) rows.push({ label: 'Output file', value: output[1].trim() });
+  if (/Finished the last-/.test(text)) {
+    rows.push({ label: 'Result', value: 'Reached the date window cutoff' });
+  } else if (/All connections have been downloaded/.test(text)) {
+    rows.push({ label: 'Result', value: 'Full connections list downloaded' });
+  }
+  return rows;
+}
+
+function showSuccessModal(completed, status) {
+  const modal = document.getElementById('success-modal');
+  const title = document.getElementById('success-title');
+  const detail = document.getElementById('success-detail');
+  const pill = document.getElementById('success-pill');
+  const list = document.getElementById('success-stats');
+  const summary = completed.summary || { rows: [] };
+  const isDownload = completed.name === 'download';
+  let rows = [...(summary.rows || [])];
+  if (isDownload && rows.length === 0) {
+    rows = parseDownloadSummaryFromLog(logEl.textContent || '');
+  }
+
+  title.textContent = isDownload
+    ? 'Download complete'
+    : `${completed.label || completed.name} complete`;
+  detail.textContent = completed.detail || '';
+  pill.className = 'status-pill succeeded';
+  pill.textContent = 'Succeeded';
+
+  list.replaceChildren();
+  rows.push({
+    label: 'Duration',
+    value: formatDuration(completed.durationMs),
+  });
+  if (isDownload && status && status.connectionsCount != null) {
+    rows.push({
+      label: 'connections.csv now',
+      value: Number(status.connectionsCount).toLocaleString(),
+    });
+  }
+  for (const row of rows) {
+    const item = document.createElement('div');
+    item.append(
+      textElement('dt', '', row.label),
+      textElement('dd', '', row.value)
+    );
+    list.append(item);
+  }
+
+  hideRunningModal();
+  modal.hidden = false;
+  setModalsScrollLock();
+}
+
+function hideSuccessModal() {
+  document.getElementById('success-modal').hidden = true;
+  setModalsScrollLock();
+}
+
 function renderJobs(status) {
   const currentEl = document.getElementById('current-job');
   const historyEl = document.getElementById('job-history');
@@ -258,27 +365,21 @@ function renderJobs(status) {
 
   currentEl.replaceChildren();
   if (job) {
-    const elapsed = Date.now() - new Date(job.startedAt).getTime();
     currentEl.append(
-      textElement('div', 'job-name', job.label || job.name),
-      textElement('p', 'job-detail', job.detail || ''),
-      textElement('p', 'job-stage', job.statusLine || 'Starting…'),
-      textElement(
-        'p',
-        'job-meta',
-        `Started ${formatTime(job.startedAt)} · running for ${formatDuration(elapsed)}`
-      )
+      textElement('p', 'empty-state', 'Progress is shown in the window above.')
     );
     summaryEl.className = 'status-pill running';
     summaryEl.textContent =
       job.state === 'cancelling' || job.state === 'stopping'
         ? 'Stopping'
         : 'Running';
+    showRunningModal(job);
   } else {
     currentEl.append(textElement('p', 'empty-state', 'No job is running.'));
     const latest = history[0];
     summaryEl.className = `status-pill ${latest ? latest.outcome : 'idle'}`;
     summaryEl.textContent = latest ? latest.outcome : 'Idle';
+    hideRunningModal();
   }
 
   historyEl.replaceChildren();
@@ -347,11 +448,17 @@ async function refreshStatus() {
 }
 
 function scrollJobsIntoView() {
-  const pane = document.getElementById('jobs-pane');
-  if (!pane) {
-    return;
-  }
-  pane.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  const running = latestStatus && latestStatus.job;
+  showRunningModal(
+    running || {
+      name: 'job',
+      label: 'Starting…',
+      detail: '',
+      startedAt: new Date().toISOString(),
+      statusLine: 'Starting process…',
+      state: 'running',
+    }
+  );
 }
 
 document.getElementById('save-email').addEventListener('click', async () => {
@@ -451,6 +558,22 @@ document.getElementById('cancel').addEventListener('click', async () => {
   }
 });
 
+document.getElementById('job-modal-cancel').addEventListener('click', async () => {
+  try {
+    await postJson('/api/jobs/cancel', {});
+  } catch (err) {
+    appendLog(err.stack || err.message);
+  }
+});
+
+document.getElementById('success-close').addEventListener('click', () => {
+  hideSuccessModal();
+});
+
+document.getElementById('success-backdrop').addEventListener('click', () => {
+  hideSuccessModal();
+});
+
 const events = new EventSource('/api/events');
 events.addEventListener('message', (event) => {
   try {
@@ -475,6 +598,13 @@ events.addEventListener('message', (event) => {
       return;
     }
     if (payload.type === 'job') {
+      if (payload.completed && payload.completed.outcome === 'succeeded') {
+        const completed = payload.completed;
+        refreshStatus()
+          .then(() => showSuccessModal(completed, latestStatus))
+          .catch((err) => appendLog(err.stack || err.message));
+        return;
+      }
       if (payload.job && latestStatus) {
         renderStatus({ ...latestStatus, job: payload.job });
       } else {

@@ -412,6 +412,66 @@ button.busy::before {
   grid-column: 1 / -1;
 }
 
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.modal[hidden] {
+  display: none;
+}
+
+.modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(2, 6, 16, 0.72);
+}
+
+.modal-panel {
+  position: relative;
+  width: min(520px, 100%);
+  background: #0e1424;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 22px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+}
+
+.success-panel .status-pill {
+  margin-bottom: 10px;
+}
+
+.modal-actions {
+  margin-top: 18px;
+}
+
+.stat-list {
+  margin: 16px 0 0;
+  display: grid;
+  gap: 10px;
+}
+
+.stat-list div {
+  display: grid;
+  gap: 2px;
+}
+
+.stat-list dt {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.stat-list dd {
+  margin: 0;
+  font-size: 1.02rem;
+  overflow-wrap: anywhere;
+}
+
 .log-card { margin-top: 16px; }
 
 .log-head {
