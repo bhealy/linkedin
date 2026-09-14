@@ -10,6 +10,7 @@ const {
 const { cutoffForDays, parseThreadDate } = require('./lib/inbox-thread-date');
 const { loadConnectionsCsv } = require('./lib/connections-csv');
 const {
+  classifyEmptyListPage,
   cursorFromOldestCached,
   discoverMessagingListApi,
   fetchConversationPage,
@@ -331,7 +332,7 @@ function classifyListedEntry(entry, connectionIndex, skipped) {
 
 async function collectConversationsFromApi(
   page,
-  { session, startCursor, connectionIndex, onProgress, onCursor }
+  { session, startCursor, savedCursor, connectionIndex, onProgress, onCursor }
 ) {
   const collected = new Map();
   const skipped = { group: 0, notConnected: 0 };
@@ -375,11 +376,13 @@ async function collectConversationsFromApi(
     }
     const parsed = parseConversationElements(result.body);
     pageNumber += 1;
-    // A resume position LinkedIn no longer recognises returns an empty page,
-    // which would otherwise look like a finished list.
+    // A LinkedIn-issued resume cursor that is no longer recognised returns an
+    // empty page. A cursor derived from the oldest cached thread is different:
+    // empty means the list is already complete.
     if (startCursor && pageNumber === 1 && !parsed.conversations.length) {
-      staleCursor = true;
-      stopReason = 'the saved resume position is no longer valid';
+      const classified = classifyEmptyListPage({ startCursor, savedCursor });
+      staleCursor = classified.staleCursor;
+      stopReason = classified.stopReason;
       break;
     }
     const before = collected.size;
@@ -906,6 +909,11 @@ async function main() {
       `No connections found in ${CONNECTIONS_FILE}. Download your connections first — the inbox scan matches conversation names against that list.`
     );
   }
+  if (!args.cache && !state.cacheComplete) {
+    throw new Error(
+      'Cache the conversation list first with --cache before searching for unrequited messages.'
+    );
+  }
   console.log(`Matching conversations against ${connectionIndex.size} connection name(s).`);
   let browser;
 
@@ -928,9 +936,6 @@ async function main() {
       } else {
         console.log('Caching the full conversation list…');
       }
-      state.cacheComplete = false;
-      state.cacheCompletedAt = '';
-      saveState(state);
     } else if (state.cacheComplete) {
       console.log(
         `Loading latest messages (cache has ${rows.length} conversation(s))…`
@@ -963,6 +968,7 @@ async function main() {
       listResult = await collectConversationsFromApi(page, {
         session,
         startCursor,
+        savedCursor: state.listCursor,
         connectionIndex,
         onProgress: (entries) => {
           for (const entry of entries) {

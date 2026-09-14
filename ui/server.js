@@ -572,6 +572,14 @@ app.post('/api/jobs/analytics', (req, res) => {
 app.post('/api/jobs/inbox-scan', (req, res) => {
   try {
     const body = req.body || {};
+    const cacheState = inboxCsvStats();
+    if (!cacheState.inboxCacheComplete) {
+      const err = new Error(
+        'Cache the conversation list first before searching for unrequited messages.'
+      );
+      err.statusCode = 400;
+      throw err;
+    }
     const days = parsePositiveInt(body.days, '--days') || 30;
     const args = [
       path.join(ROOT, 'scan-inbox.js'),

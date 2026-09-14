@@ -1,6 +1,7 @@
 const assert = require('assert');
 const {
   buildListUrl,
+  classifyEmptyListPage,
   cursorFromOldestCached,
   decodeListCursor,
   discoverMessagingListApi,
@@ -15,6 +16,25 @@ const cursor = encodeListCursor(1673568000000, '2-abc');
 const decoded = decodeListCursor(cursor);
 assert.strictEqual(decoded.lastActivityMs, 1673568000000);
 assert.strictEqual(decoded.threadId, '2-abc');
+
+assert.deepStrictEqual(classifyEmptyListPage({}), {
+  staleCursor: false,
+  stopReason: 'reached the end of the inbox',
+});
+assert.deepStrictEqual(
+  classifyEmptyListPage({ startCursor: 'saved-token', savedCursor: 'saved-token' }),
+  {
+    staleCursor: true,
+    stopReason: 'the saved resume position is no longer valid',
+  }
+);
+assert.deepStrictEqual(
+  classifyEmptyListPage({ startCursor: 'derived-from-oldest', savedCursor: '' }),
+  {
+    staleCursor: false,
+    stopReason: 'reached the end of the inbox',
+  }
+);
 
 // Rest.li punctuation stays literal; only the urn and cursor values are encoded.
 const builtUrl = buildListUrl({

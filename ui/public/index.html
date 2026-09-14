@@ -243,7 +243,7 @@
           <div class="step-marker"><span>03</span></div>
           <div class="step-content">
             <div class="step-heading"><div><p class="step-kicker">Discover</p><h2>Search for unrequited love</h2><p class="purpose">Find connections who started a conversation but never received a reply from you.</p></div><span class="step-state">Locked</span></div>
-            <div class="sequence-note"><span>1</span><p><strong>Cache the conversation list first</strong><small>One pass builds a reusable index without opening threads.</small></p><i>→</i><span>2</span><p><strong>Search recent messages</strong><small>Only new or changed conversations need to be read.</small></p></div>
+            <div class="sequence-note"><span>1</span><p><strong>Cache the conversation list first</strong><small>Search stays locked until this pass reaches the oldest conversation.</small></p><i>→</i><span>2</span><p><strong>Search recent messages</strong><small>Only new or changed conversations need to be read.</small></p></div>
             <p class="job-hint" id="inbox-cache-summary">Conversation cache: 0 · candidates: 0</p>
             <div class="form-grid thirds">
               <label>Days back<input id="inbox-days" type="number" min="1" value="30" data-tooltip="Only read conversations active within this many days."></label>
@@ -252,7 +252,7 @@
             </div>
             <label class="check" data-tooltip="Back up and reset the conversation CSV and scan state before running."><input id="inbox-fresh" type="checkbox"> Start with a fresh CSV and state</label>
             <p class="job-hint" id="inbox-status" hidden></p>
-            <div class="action-row"><button type="button" id="start-inbox-cache" data-tooltip="Page through the inbox via LinkedIn's conversation list API. A later run resumes from the last saved page instead of starting over.">Cache conversation list</button><button type="button" id="start-inbox-scan" class="primary" data-tooltip="Open only conversations that are new, changed, or unread.">Search messages <span>→</span></button><a class="card-help" href="/docs/readme.html#dive-inbox" target="_blank" rel="noopener">Inbox guide</a></div>
+            <div class="action-row"><button type="button" id="start-inbox-cache" data-tooltip="Page through the inbox via LinkedIn's conversation list API. A later run resumes from the last saved page instead of starting over.">Cache conversation list</button><button type="button" id="start-inbox-scan" class="primary" data-tooltip="Locked until the conversation list cache is complete. Then it opens only conversations that are new, changed, or unread.">Search for unrequited love <span>→</span></button><a class="card-help" href="/docs/readme.html#dive-inbox" target="_blank" rel="noopener">Inbox guide</a></div>
           </div>
         </section>
 

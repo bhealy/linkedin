@@ -1125,7 +1125,8 @@ function renderJourney(status) {
   const busy = Boolean(status.job);
   const hasEmail = Boolean(status.email);
   const hasConnections = Number(status.connectionsCount) > 0;
-  const hasInbox = Boolean(status.inboxCacheComplete) || Number(status.conversationCount) > 0;
+  const hasCacheComplete = Boolean(status.inboxCacheComplete);
+  const hasInbox = hasCacheComplete || Number(status.conversationCount) > 0;
   const hasInsights = hasConnections || hasInbox;
   const hasDryRun = (status.history || []).some(
     (job) => job.name === 'remove-dry-run' && job.outcome === 'succeeded'
@@ -1135,7 +1136,7 @@ function renderJourney(status) {
     setup: hasEmail ? 'complete' : 'current',
     download: !hasEmail ? 'locked' : hasConnections ? 'complete' : 'current',
     insights: !hasConnections ? 'locked' : hasInsights ? 'complete' : 'available',
-    inbox: !hasConnections ? 'locked' : hasInbox ? 'complete' : 'current',
+    inbox: !hasConnections ? 'locked' : hasCacheComplete ? 'complete' : 'current',
     review: !hasConnections ? 'locked' : hasDryRun ? 'complete' : hasInbox ? 'current' : 'available',
     remove: !hasConnections ? 'locked' : hasDryRun ? 'current' : 'available',
   };
@@ -1155,7 +1156,11 @@ function renderJourney(status) {
 
   document.getElementById('start-download').disabled = busy || !hasEmail;
   document.getElementById('start-analytics').disabled = busy || !hasConnections;
-  document.getElementById('start-inbox-scan').disabled = busy || !hasConnections;
+  const scanBtn = document.getElementById('start-inbox-scan');
+  scanBtn.disabled = busy || !hasConnections || !hasCacheComplete;
+  scanBtn.dataset.tooltip = hasCacheComplete
+    ? 'Open only conversations that are new, changed, or unread.'
+    : 'Cache the conversation list first. Search stays locked until that pass reaches the oldest conversation.';
   document.getElementById('start-inbox-cache').disabled = busy || !hasConnections;
   const sourceAvailable = selectedSourceAvailable(status);
   document.getElementById('start-dry').disabled = busy || !sourceAvailable;
@@ -1233,7 +1238,8 @@ function renderStatus(status) {
     status.job && (status.job.name === 'inbox-scan' || status.job.name === 'inbox-cache')
   );
   document.getElementById('start-download').disabled = busy;
-  document.getElementById('start-inbox-scan').disabled = busy;
+  document.getElementById('start-inbox-scan').disabled =
+    busy || !status.inboxCacheComplete;
   document.getElementById('start-inbox-cache').disabled = busy;
   document.getElementById('start-analytics').disabled = busy;
   document.getElementById('start-dry').disabled = busy;
@@ -1304,6 +1310,10 @@ document.getElementById('start-download').addEventListener('click', async () => 
 });
 
 document.getElementById('start-inbox-scan').addEventListener('click', async () => {
+  if (!latestStatus || !latestStatus.inboxCacheComplete) {
+    appendLog('Cache the conversation list first before searching for unrequited messages.');
+    return;
+  }
   setInboxScanRunning(true, 'scan');
   document.getElementById('start-inbox-scan').disabled = true;
   document.getElementById('start-inbox-cache').disabled = true;
