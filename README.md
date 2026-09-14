@@ -230,8 +230,8 @@ Default ignored companies: **Manna**, **Meili** (colleagues). Add more with `--i
 Export a single LinkedIn profile to structured JSON for cross-network portability:
 
 ```bash
-npm run profile:scrape -- https://www.linkedin.com/in/bhealy/
-npm run profile:scrape -- --vanity bhealy
+npm run profile:scrape -- https://www.linkedin.com/in/your-profile/
+npm run profile:scrape -- --vanity your-profile
 node scrape-profile.js --skip-details    # ~35s: main page + API only
 node scrape-profile.js --full-details    # ~2min: all 12 detail sub-pages
 ```
@@ -252,5 +252,5 @@ Regenerate the HTML page from an existing export:
 
 ```bash
 npm run profile:html:open
-node generate-profile-html.js profiles/bhealy/profile.json --open
+node generate-profile-html.js profiles/your-profile/profile.json --open
 ```

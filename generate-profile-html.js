@@ -5,7 +5,7 @@ const { generateProfileHtmlFromJson } = require('./lib/profile-html');
 
 function parseArgs(argv) {
   const args = {
-    input: path.join(__dirname, 'profiles', 'bhealy', 'profile.json'),
+    input: path.join(__dirname, 'profiles', 'your-profile', 'profile.json'),
     output: null,
     open: false,
   };
@@ -69,10 +69,10 @@ async function maybeOpen(filePath) {
 function printHelp() {
   console.log(`Usage:
   node generate-profile-html.js [profile.json]
-  node generate-profile-html.js --input profiles/bhealy/profile.json --open
+  node generate-profile-html.js --input profiles/your-profile/profile.json --open
 
 Options:
-  --input <path>   Path to profile.json (default: profiles/bhealy/profile.json)
+  --input <path>   Path to profile.json (default: profiles/your-profile/profile.json)
   --output <path>  Output HTML path (default: beside profile.json)
   --open           Open the generated page in your browser
   --help           Show this help

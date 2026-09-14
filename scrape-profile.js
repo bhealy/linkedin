@@ -9,7 +9,7 @@ const {
 
 function parseArgs(argv) {
   const args = {
-    profile: 'https://www.linkedin.com/in/bhealy/',
+    profile: 'https://www.linkedin.com/in/your-profile/',
     output: DEFAULT_OUTPUT_ROOT,
     headless: process.env.HEADLESS === 'true',
     skipDetails: false,
@@ -60,8 +60,8 @@ function parseArgs(argv) {
 function printHelp() {
   console.log(`Usage:
   node scrape-profile.js [profile-url-or-vanity]
-  node scrape-profile.js --vanity bhealy
-  node scrape-profile.js https://www.linkedin.com/in/bhealy/
+  node scrape-profile.js --vanity your-profile
+  node scrape-profile.js https://www.linkedin.com/in/your-profile/
 
 Options:
   --output <dir>     Output root directory (default: ./profiles)
@@ -76,8 +76,8 @@ Speed: default visits 3 detail pages (experience, education, skills).
 
 Examples:
   npm run profile:scrape
-  npm run profile:scrape -- https://www.linkedin.com/in/bhealy/
-  node scrape-profile.js --vanity bhealy --output ./profiles
+  npm run profile:scrape -- https://www.linkedin.com/in/your-profile/
+  node scrape-profile.js --vanity your-profile --output ./profiles
 `);
 }
 

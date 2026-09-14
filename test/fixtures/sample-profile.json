@@ -2,16 +2,16 @@
   "schemaVersion": 1,
   "source": {
     "network": "linkedin",
-    "profileUrl": "https://www.linkedin.com/in/bhealy/",
-    "vanityName": "bhealy",
+    "profileUrl": "https://www.linkedin.com/in/ada-lovelace/",
+    "vanityName": "ada-lovelace",
     "scrapedAt": "2026-07-01T12:00:00.000Z",
     "scrapeDurationMs": 42000
   },
   "identity": {
-    "publicIdentifier": "bhealy",
-    "fullName": "Brendan Healy",
-    "firstName": "Brendan",
-    "lastName": "Healy",
+    "publicIdentifier": "ada-lovelace",
+    "fullName": "Ada Lovelace",
+    "firstName": "Ada",
+    "lastName": "Lovelace",
     "headline": "Engineering leader · Building systems that scale",
     "summary": "Experienced technology leader focused on aviation, data platforms, and developer tooling. Passionate about local-first software and clean operational systems.",
     "location": "Dublin, Ireland",
@@ -34,7 +34,7 @@
   "experience": [
     {
       "title": "Chief Technology Officer",
-      "companyName": "Manna Drone Delivery",
+      "companyName": "Example Drone Delivery",
       "employmentType": "Full-time",
       "location": "Dublin, Ireland",
       "description": "Leading engineering, data, and platform teams.",
@@ -49,7 +49,7 @@
   ],
   "education": [
     {
-      "schoolName": "Trinity College Dublin",
+      "schoolName": "Example University",
       "degreeName": "BSc",
       "fieldOfStudy": "Computer Science",
       "dateRange": { "text": "2008 – 2012" }

@@ -7,7 +7,7 @@ const {
 } = require('../lib/connection-index');
 
 assert.strictEqual(normaliseName('Harjot Gill, PMP'), 'harjot gill');
-assert.strictEqual(normaliseName('Bobby Healy (Manna)'), 'bobby healy');
+assert.strictEqual(normaliseName('Ada Lovelace (Acme)'), 'ada lovelace');
 assert.strictEqual(normaliseName('  Síle   Ó Brien 🚀 '), 'sile o brien');
 assert.strictEqual(normaliseName(''), '');
 

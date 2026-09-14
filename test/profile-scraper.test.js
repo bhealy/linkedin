@@ -11,7 +11,7 @@ const samplePayload = {
     elements: [
       {
         entityUrn: 'urn:li:fsd_profile:123',
-        publicIdentifier: 'bhealy',
+        publicIdentifier: 'ada-lovelace',
       },
     ],
   },
@@ -19,9 +19,9 @@ const samplePayload = {
     {
       $type: 'com.linkedin.voyager.dash.identity.profile.Profile',
       entityUrn: 'urn:li:fsd_profile:123',
-      publicIdentifier: 'bhealy',
-      firstName: 'Brendan',
-      lastName: 'Healy',
+      publicIdentifier: 'ada-lovelace',
+      firstName: 'Ada',
+      lastName: 'Lovelace',
       headline: { text: 'Engineer' },
       summary: { text: 'Building things.' },
       locationName: 'Dublin, Ireland',
@@ -44,15 +44,15 @@ const samplePayload = {
 };
 
 const parsed = parseProfileEntities([samplePayload]);
-assert.strictEqual(parsed.identity.fullName, 'Brendan Healy');
+assert.strictEqual(parsed.identity.fullName, 'Ada Lovelace');
 assert.strictEqual(parsed.identity.headline, 'Engineer');
 assert.strictEqual(parsed.experience.length, 1);
 assert.strictEqual(parsed.skills[0].name, 'JavaScript');
 
-const input = parseProfileInput('https://www.linkedin.com/in/bhealy/');
-assert.strictEqual(input.vanityName, 'bhealy');
+const input = parseProfileInput('https://www.linkedin.com/in/ada-lovelace/');
+assert.strictEqual(input.vanityName, 'ada-lovelace');
 
-const profile = createEmptyProfile('bhealy', input.profileUrl);
+const profile = createEmptyProfile('ada-lovelace', input.profileUrl);
 profile.experience.push(parsed.experience[0], parsed.experience[0]);
 profile.experience = mergeUniqueByKey(profile.experience, (row) => `${row.title}|${row.companyName}`);
 assert.strictEqual(profile.experience.length, 1);
@@ -61,7 +61,7 @@ const sampleProfile = JSON.parse(
   fs.readFileSync(path.join(__dirname, 'fixtures', 'sample-profile.json'), 'utf8')
 );
 const html = renderProfileHtml(sampleProfile);
-assert.ok(html.includes('Brendan Healy'));
+assert.ok(html.includes('Ada Lovelace'));
 assert.ok(html.includes('Experience'));
 assert.ok(html.includes('skill-pill'));
 

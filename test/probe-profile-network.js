@@ -2,7 +2,7 @@ const puppeteer = require('puppeteer');
 const fs = require('fs');
 const path = require('path');
 
-const PROFILE_URL = 'https://www.linkedin.com/in/bhealy/';
+const PROFILE_URL = 'https://www.linkedin.com/in/your-profile/';
 const OUT_DIR = path.join(__dirname, 'output');
 
 async function main() {

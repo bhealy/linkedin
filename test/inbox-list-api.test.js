@@ -72,7 +72,7 @@ const { conversations, nextCursor } = parseConversationElements({
       $type: 'com.linkedin.messenger.MessagingParticipant',
       entityUrn: `urn:li:msg_messagingParticipant:${SELF}`,
       participantType: {
-        member: { firstName: { text: 'Bobby' }, lastName: { text: 'Healy' } },
+        member: { firstName: { text: 'Grace' }, lastName: { text: 'Hopper' } },
       },
     },
     {
