@@ -96,9 +96,9 @@ function inboxCsvStats() {
     try {
       const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
       cacheComplete = Boolean(state && state.cacheComplete);
-      inboxCacheResumable = Boolean(
-        state && (state.listCursor || rows.length) && !state.cacheComplete
-      );
+      // Only a saved cursor can pick up mid-list; anything else starts again
+      // from the newest conversation.
+      inboxCacheResumable = Boolean(state && state.listCursor && !state.cacheComplete);
     } catch (err) {
       console.error(err.stack || err.message);
     }

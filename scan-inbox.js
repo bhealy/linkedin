@@ -44,6 +44,7 @@ const LIST_STALL_PAUSE_MS = 2500;
 const LIST_STALL_LIMIT = 10;
 const CACHE_PERSIST_EVERY = 25;
 const LIST_RECOVERY_LIMIT = 3;
+const BROWSER_CLOSE_TIMEOUT_MS = 8000;
 const THREAD_PAUSE_MS = 1500;
 let activeBrowser = null;
 let pauseRequested = false;
@@ -310,6 +311,10 @@ function oldestActivityLabel(entries) {
 }
 
 function classifyListedEntry(entry, connectionIndex, skipped) {
+  if (entry.groupChat) {
+    skipped.group += 1;
+    return null;
+  }
   const { match, ambiguous, reason } = matchConnection(connectionIndex, entry.name);
   if (reason === 'group') {
     skipped.group += 1;
@@ -331,7 +336,8 @@ async function collectConversationsFromApi(
   let listed = 0;
   let cursor = startCursor || '';
   let stopReason = 'reached the end of the inbox';
-  let pageNumber = startCursor ? 1 : 0;
+  let pageNumber = 0;
+  let staleCursor = false;
 
   while (!pauseRequested) {
     let result;
@@ -351,11 +357,20 @@ async function collectConversationsFromApi(
     }
     if (!result.ok) {
       throw new Error(
-        `Messaging list request failed (${result.status}): ${JSON.stringify(result.body).slice(0, 240)}`
+        `Messaging list request failed (${result.status}) on page ${pageNumber + 1}: ${JSON.stringify(
+          result.body
+        ).slice(0, 240)}`
       );
     }
     const parsed = parseConversationElements(result.body);
     pageNumber += 1;
+    // A resume position LinkedIn no longer recognises returns an empty page,
+    // which would otherwise look like a finished list.
+    if (startCursor && pageNumber === 1 && !parsed.conversations.length) {
+      staleCursor = true;
+      stopReason = 'the saved resume position is no longer valid';
+      break;
+    }
     const before = collected.size;
     for (const entry of parsed.conversations) {
       if (!entry.name) {
@@ -408,7 +423,7 @@ async function collectConversationsFromApi(
     caughtUp: false,
     stopReason,
     oldest: oldestActivityLabel(collected.values()),
-    listCursor: cursor,
+    staleCursor,
     pages: pageNumber,
   };
 }
@@ -920,19 +935,18 @@ async function main() {
 
     let listResult;
     if (args.cache) {
-      let session = {
-        queryId: state.listQueryId,
-        mailboxUrn: state.mailboxUrn,
-      };
-      if (!session.queryId || !session.mailboxUrn) {
-        session = await discoverMessagingListApi(page);
-      }
+      // The queryId is a LinkedIn build hash, so read it from the live page
+      // rather than trusting the one saved by an earlier run.
+      const session = await discoverMessagingListApi(page);
       state.listQueryId = session.queryId;
       state.mailboxUrn = session.mailboxUrn;
-      const startCursor =
-        state.listCursor || cursorFromOldestCached(rows, parseThreadDate);
-      if (startCursor && !state.listCursor) {
-        console.log('No saved GraphQL cursor; continuing from the oldest cached thread.');
+      const startCursor = state.listCursor || cursorFromOldestCached(rows);
+      if (state.listCursor) {
+        console.log('Resuming from the saved conversation-list page…');
+      } else if (startCursor) {
+        console.log('Resuming from the oldest cached thread…');
+      } else if (rows.length) {
+        console.log('No resume point saved; re-listing from the newest conversation.');
       }
       listResult = await collectConversationsFromApi(page, {
         session,
@@ -991,10 +1005,17 @@ async function main() {
       const reachedEnd = /reached the end of the inbox/.test(stopReason);
       state.cacheComplete = reachedEnd && !pauseRequested;
       state.cacheCompletedAt = state.cacheComplete ? new Date().toISOString() : '';
-      if (listResult.listCursor) {
-        state.listCursor = listResult.listCursor;
+      // Cursors are only ever the ones LinkedIn handed back, so a finished or
+      // invalid run leaves nothing to resume from.
+      if (reachedEnd || listResult.staleCursor) {
+        state.listCursor = '';
       }
       saveState(state);
+      if (listResult.staleCursor) {
+        throw new Error(
+          'The saved resume position is no longer valid. Run the cache again to list from the newest conversation.'
+        );
+      }
       if (pauseRequested) {
         console.log('Paused — conversation cache saved. Run cache again to resume older pages.');
       } else if (!reachedEnd) {
@@ -1140,10 +1161,19 @@ async function closeActiveBrowser() {
   if (!browser) {
     return;
   }
+  // An orphaned Chromium keeps the profile locked, which stops the next run
+  // from launching at all, so stop waiting on a clean close and kill it.
+  const child = browser.process();
+  const hardKill = setTimeout(() => {
+    child?.kill('SIGKILL');
+  }, BROWSER_CLOSE_TIMEOUT_MS);
   try {
     await browser.close();
   } catch (err) {
     console.error(err.stack || err.message);
+    child?.kill('SIGKILL');
+  } finally {
+    clearTimeout(hardKill);
   }
 }
 
@@ -1159,6 +1189,14 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
     } catch (err) {
       console.error(err.stack || err.message);
     }
+    // Chromium outlives this process unless it is closed here, and the orphan
+    // holds the profile lock that the resume run needs.
+    closeActiveBrowser()
+      .catch((err) => console.error(err.stack || err.message))
+      .finally(() => {
+        console.log('Paused — run the cache again to resume from here.');
+        process.exit(0);
+      });
   });
 }
 
@@ -1170,5 +1208,5 @@ main()
   })
   .catch((err) => {
     console.error(err.stack || err.message);
-    process.exitCode = 1;
+    process.exitCode = pauseRequested ? 0 : 1;
   });
