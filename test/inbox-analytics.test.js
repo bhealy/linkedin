@@ -39,8 +39,27 @@ const rows = [
 ];
 
 assert.strictEqual(activityMs(rows[0]), 1708423200000);
-assert.strictEqual(activityMs({ lastActivityMs: '1708423200' }), 1708423200000);
 assert.strictEqual(activityMs(rows[2]), null);
+
+// A stored millisecond timestamp is used as-is, even for the oldest threads
+// LinkedIn returns, so it can never be rescaled into a nonsense year.
+assert.strictEqual(activityMs({ lastActivityMs: '1178220275000' }), 1178220275000);
+assert.strictEqual(
+  new Date(activityMs({ lastActivityMs: '1178220275000' })).getUTCFullYear(),
+  2007
+);
+
+// Year-less labels resolve to the most recent matching day, not 2001.
+const yearless = activityMs({ lastActivity: 'Feb 20' });
+const thisYear = new Date().getFullYear();
+assert.ok(
+  [thisYear, thisYear - 1].includes(new Date(yearless).getFullYear()),
+  `expected a recent year, got ${new Date(yearless).toISOString()}`
+);
+assert.strictEqual(
+  activityMs({ lastActivity: 'May 3, 2007' }),
+  new Date(2007, 4, 3).getTime()
+);
 
 assert.deepStrictEqual(
   filterConversations(rows, { q: 'software' }).map((row) => row.name),
