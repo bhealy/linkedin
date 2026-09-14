@@ -220,6 +220,14 @@ function setAnalyticsRunning(running) {
   hint.hidden = !running;
 }
 
+function setInboxScanRunning(running) {
+  const btn = document.getElementById('start-inbox-scan');
+  const hint = document.getElementById('inbox-status');
+  btn.classList.toggle('busy', running);
+  btn.textContent = running ? 'Scanning…' : 'Scan inbox';
+  hint.hidden = !running;
+}
+
 function formatDuration(ms) {
   const seconds = Math.max(0, Math.floor((Number(ms) || 0) / 1000));
   if (seconds < 60) {
@@ -314,14 +322,19 @@ function showSuccessModal(completed, status) {
   const list = document.getElementById('success-stats');
   const summary = completed.summary || { rows: [] };
   const isDownload = completed.name === 'download';
+  const isInboxScan = completed.name === 'inbox-scan';
   let rows = [...(summary.rows || [])];
   if (isDownload && rows.length === 0) {
     rows = parseDownloadSummaryFromLog(logEl.textContent || '');
   }
 
-  title.textContent = isDownload
-    ? 'Download complete'
-    : `${completed.label || completed.name} complete`;
+  if (isDownload) {
+    title.textContent = 'Download complete';
+  } else if (isInboxScan) {
+    title.textContent = 'Inbox scan complete';
+  } else {
+    title.textContent = `${completed.label || completed.name} complete`;
+  }
   detail.textContent = completed.detail || '';
   pill.className = 'status-pill succeeded';
   pill.textContent = 'Succeeded';
@@ -337,6 +350,12 @@ function showSuccessModal(completed, status) {
       value: Number(status.connectionsCount).toLocaleString(),
     });
   }
+  if (isInboxScan && status && status.unrequitedCount != null) {
+    rows.push({
+      label: 'unrequited-love.csv now',
+      value: `${Number(status.unrequitedCount).toLocaleString()} candidates`,
+    });
+  }
   for (const row of rows) {
     const item = document.createElement('div');
     item.append(
@@ -345,6 +364,8 @@ function showSuccessModal(completed, status) {
     );
     list.append(item);
   }
+
+  document.getElementById('success-review').hidden = !isInboxScan;
 
   hideRunningModal();
   modal.hidden = false;
@@ -431,6 +452,7 @@ function renderStatus(status) {
   }
   const busy = Boolean(status.job);
   const analyticsRunning = Boolean(status.job && status.job.name === 'analytics');
+  const inboxRunning = Boolean(status.job && status.job.name === 'inbox-scan');
   document.getElementById('start-download').disabled = busy;
   document.getElementById('start-inbox-scan').disabled = busy;
   document.getElementById('start-analytics').disabled = busy;
@@ -438,6 +460,7 @@ function renderStatus(status) {
   document.getElementById('start-execute').disabled = busy;
   document.getElementById('cancel').disabled = !busy;
   setAnalyticsRunning(analyticsRunning);
+  setInboxScanRunning(inboxRunning);
   renderJobs(status);
 }
 
@@ -486,6 +509,8 @@ document.getElementById('start-download').addEventListener('click', async () => 
 });
 
 document.getElementById('start-inbox-scan').addEventListener('click', async () => {
+  setInboxScanRunning(true);
+  document.getElementById('start-inbox-scan').disabled = true;
   scrollJobsIntoView();
   try {
     await postJson('/api/jobs/inbox-scan', {
@@ -495,7 +520,9 @@ document.getElementById('start-inbox-scan').addEventListener('click', async () =
       fresh: document.getElementById('inbox-fresh').checked,
     });
   } catch (err) {
+    setInboxScanRunning(false);
     appendLog(err.stack || err.message);
+    await refreshStatus();
   }
 });
 

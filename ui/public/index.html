@@ -23,7 +23,7 @@
   </header>
 
   <main>
-    <p class="lead">Drive download, analytics, and removals from this page. LinkedIn login still opens in Puppeteer’s Chromium window when needed. Your password is sent only with the job that needs it and is never written to <code>.env</code>; it is kept in this browser only if you tick “Remember for 30 days”.</p>
+    <p class="lead">Drive download, analytics, inbox scans, and removals from this page. LinkedIn login still opens in Puppeteer’s Chromium window when needed. Your password is sent only with the job that needs it and is never written to <code>.env</code>; it is kept in this browser only if you tick “Remember for 30 days”.</p>
 
     <p class="lead">New here? The <a href="/docs/index.html#wizard" target="_blank" rel="noopener" data-tooltip="Open the guided eight-step introduction in a new tab. It is served locally and works offline.">step-by-step wizard</a> walks through every stage in order, and the <a href="/docs/readme.html" target="_blank" rel="noopener" data-tooltip="Open the full local reference in a new tab, with both a short summary and detailed instructions.">full guide</a> has an executive summary plus a deeper dive on how each part works. Both are served from this machine, so they work offline.</p>
 
@@ -32,7 +32,7 @@
       <div class="stat" tabindex="0" data-tooltip="The number of connection records in the local master connections.csv file, including records marked as disconnected."><strong id="stat-csv">0</strong><span>connections.csv</span></div>
       <div class="stat" tabindex="0" data-tooltip="The number of title-classified records in sales-connections.csv from the optional sales and recruitment search."><strong id="stat-sales">0</strong><span>sales-connections.csv</span></div>
       <div class="stat" tabindex="0" data-tooltip="The number of connections who messaged you in an inbox thread where you never replied."><strong id="stat-unrequited">0</strong><span>unrequited-love.csv</span></div>
-      <div class="stat" tabindex="0" data-tooltip="Shows idle when nothing is running, or the name of the active download, analytics or removal job. Only one job runs at a time."><strong id="stat-job">idle</strong><span>Current job</span></div>
+      <div class="stat" tabindex="0" data-tooltip="Shows idle when nothing is running, or the name of the active download, analytics, inbox scan or removal job. Only one job runs at a time."><strong id="stat-job">idle</strong><span>Current job</span></div>
     </section>
 
     <div class="grid">
@@ -72,8 +72,8 @@
       </section>
 
       <section class="card">
-        <h2>Inbox scan</h2>
-        <p>Find connections who messaged you in a thread where you never replied.</p>
+        <h2>Inbox scan <a class="card-help" href="/docs/readme.html#dive-inbox" target="_blank" rel="noopener" data-tooltip="Jump to the inbox scan section of the full local guide.">Explain this</a></h2>
+        <p>Finds connections who messaged you and never got a reply, and writes them to unrequited-love.csv for the Remove card.</p>
         <label>Days back
           <input id="inbox-days" type="number" min="1" value="30" data-tooltip="Only scan connection conversations whose latest activity is within this many days.">
         </label>
@@ -81,14 +81,18 @@
           <input id="inbox-limit" type="number" min="1" placeholder="all" data-tooltip="Maximum number of unscanned conversations to open in this run. Leave blank for every conversation in the date window.">
         </label>
         <label class="check" data-tooltip="Back up and reset inbox scan state and unrequited-love.csv before scanning."><input id="inbox-fresh" type="checkbox"> Fresh CSV and state</label>
-        <button type="button" id="start-inbox-scan" class="primary" data-tooltip="Open LinkedIn Messaging, select Connections, load every conversation in the date window, and inspect each full thread.">Scan inbox</button>
+        <p class="job-hint" id="inbox-status" hidden>Reading conversations in LinkedIn Messaging… each thread is opened and scrolled to the top, so this takes a while.</p>
+        <div class="row">
+          <button type="button" id="start-inbox-scan" class="primary" data-tooltip="Open LinkedIn Messaging, apply the Connections filter, load every conversation in the date window, and read each full thread. Nothing is removed by this scan.">Scan inbox</button>
+          <a id="open-unrequited" class="button-link" href="/unrequited-love.csv" target="_blank" rel="noopener" data-tooltip="Open unrequited-love.csv in a new tab to review the candidates before you remove anyone. Run a scan first if it is empty.">Review candidates</a>
+        </div>
       </section>
 
       <section class="card">
         <h2>Remove <a class="card-help" href="/docs/readme.html#dive-remove" target="_blank" rel="noopener" data-tooltip="Jump to the safety notes and detailed removal workflow in the local guide.">Explain this</a></h2>
         <p>Always dry-run first. Execute is a separate action.</p>
         <label>CSV
-          <select id="csv-source" data-tooltip="Choose the source list. connections.csv is the master download; sales-connections.csv contains contacts classified by the optional title search.">
+          <select id="csv-source" data-tooltip="Choose the source list. connections.csv is the master download; sales-connections.csv contains contacts classified by the optional title search; unrequited-love.csv holds the connections found by the inbox scan who never got a reply.">
             <option value="connections">connections.csv</option>
             <option value="sales">sales-connections.csv</option>
             <option value="unrequited">unrequited-love.csv</option>
@@ -171,6 +175,7 @@
       <dl id="success-stats" class="stat-list"></dl>
       <div class="row modal-actions">
         <button type="button" id="success-close" class="primary">Close</button>
+        <a id="success-review" class="button-link" href="/unrequited-love.csv" target="_blank" rel="noopener" data-tooltip="Open unrequited-love.csv to review the candidates before removing anyone." hidden>Review candidates</a>
       </div>
     </div>
   </div>

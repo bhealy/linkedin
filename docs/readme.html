@@ -123,6 +123,7 @@ npm run connections:analytics:open</pre>
             <li><a href="#dive-months">Last N months</a></li>
             <li><a href="#dive-analytics">Analytics</a></li>
             <li><a href="#dive-scrape">Title scrape</a></li>
+            <li><a href="#dive-inbox">Inbox scan</a></li>
             <li><a href="#dive-remove">Remove</a></li>
             <li><a href="#dive-profile">Single profile</a></li>
             <li><a href="#dive-files">Files &amp; privacy</a></li>
@@ -208,8 +209,41 @@ npm run scrape:sales:fresh</pre>
             </div>
           </article>
 
+          <article id="dive-inbox">
+            <h3>6. Inbox scan: who never got a reply</h3>
+            <p>Opens LinkedIn Messaging, applies the <strong>Connections</strong> filter so only first-degree threads count, then walks every conversation whose latest activity falls inside <code>--days</code> (default 30). Each thread is opened and scrolled to the very top, so the whole history is read, not just the visible messages.</p>
+            <p>A connection becomes a candidate only when they sent at least one message and you sent <strong>none</strong> in that thread. Candidates are written to <code>unrequited-love.csv</code>; nothing is removed by the scan itself.</p>
+            <div class="code-block">
+              <button type="button" class="copy-btn" aria-label="Copy code">Copy</button>
+              <pre>npm run inbox:scan
+npm run inbox:scan -- --days 90 --limit 50
+npm run inbox:scan:status
+npm run inbox:scan -- --fresh</pre>
+            </div>
+            <p>Progress is stored in <code>inbox-scan-state.json</code>, keyed by name, timestamp and message snippet, so runs resume and a thread is read again only when it has new activity. Every message counts, including attachments and emoji, so an image-only reply from you still protects that connection from being flagged.</p>
+            <p>Thread headers link to obfuscated member ids, which the remover cannot use, so each candidate's profile is visited once at the end of a run to resolve the real vanity name. Only resolved rows reach the CSV.</p>
+            <table>
+              <thead>
+                <tr><th>Flag</th><th>Description</th></tr>
+              </thead>
+              <tbody>
+                <tr><td><code>--days</code></td><td>How far back to look, by last activity (default 30)</td></tr>
+                <tr><td><code>--limit</code></td><td>Max unscanned conversations to open this run</td></tr>
+                <tr><td><code>--csv</code></td><td>Output path (default <code>unrequited-love.csv</code>)</td></tr>
+                <tr><td><code>--fresh</code></td><td>Back up, then reset the CSV and scan state</td></tr>
+                <tr><td><code>--status</code></td><td>Print scanned, found and ready-to-remove counts</td></tr>
+              </tbody>
+            </table>
+            <p>Review the CSV, then hand it to the remover — dry run first:</p>
+            <div class="code-block">
+              <button type="button" class="copy-btn" aria-label="Copy code">Copy</button>
+              <pre>npm run connections:remove -- --csv unrequited-love.csv --limit 20
+npm run connections:remove -- --execute --csv unrequited-love.csv --limit 20</pre>
+            </div>
+          </article>
+
           <article id="dive-remove">
-            <h3>6. Bulk remove</h3>
+            <h3>7. Bulk remove</h3>
             <p>Omit <code>--execute</code> to print who would be removed. Removals are permanent on LinkedIn. Default ignored company names in headlines: Manna and Meili (add more with <code>--ignore-company</code>). Spacing is about 1.2 seconds between removals. Removed vanity names are remembered so later runs skip them.</p>
             <div class="code-block">
               <button type="button" class="copy-btn" aria-label="Copy code">Copy</button>
@@ -234,7 +268,7 @@ npm run connections:remove -- --execute --status sales --limit 50</pre>
           </article>
 
           <article id="dive-profile">
-            <h3>7. Archive one profile</h3>
+            <h3>8. Archive one profile</h3>
             <p>Exports a single public profile to JSON plus a self-contained HTML page under <code>profiles/</code> (gitignored). Default visit is experience, education, and skills (~30–45s). <code>--full-details</code> hits every detail sub-page.</p>
             <div class="code-block">
               <button type="button" class="copy-btn" aria-label="Copy code">Copy</button>
@@ -246,7 +280,7 @@ npm run profile:html:open</pre>
           </article>
 
           <article id="dive-files">
-            <h3>8. Files you must not publish</h3>
+            <h3>9. Files you must not publish</h3>
             <p>Safe to share: source code, <code>.env.example</code>, this docs site. Never commit or upload:</p>
             <table>
               <thead>
@@ -256,6 +290,7 @@ npm run profile:html:open</pre>
                 <tr><td><code>.env</code></td><td>Your email / optional session cookie</td></tr>
                 <tr><td><code>.linkedin-session/</code></td><td>Logged-in browser profile</td></tr>
                 <tr><td><code>connections.csv</code>, <code>sales-connections.csv</code></td><td>Your network</td></tr>
+                <tr><td><code>unrequited-love.csv</code></td><td>People who messaged you without a reply</td></tr>
                 <tr><td><code>connections-analytics.html</code></td><td>Embedded contact list</td></tr>
                 <tr><td><code>profiles/</code></td><td>Archived profile dumps</td></tr>
                 <tr><td><code>*-state.json</code>, <code>remove-connections-results.json</code></td><td>Progress and personal IDs</td></tr>

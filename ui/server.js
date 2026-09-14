@@ -141,6 +141,33 @@ function summariseJob(job) {
     return summary;
   }
 
+  if (job.name === 'inbox-scan') {
+    const listed = pickLog(
+      log,
+      /Listed ([0-9,]+) conversation\(s\); ([0-9,]+) in window, ([0-9,]+) unscanned/i
+    );
+    const scanned = pickLog(log, /Scanned this run:\s+([0-9,]+)/i);
+    const found = pickLog(log, /New candidates:\s+([0-9,]+)/i);
+    const rows = pickLog(log, /Rows in CSV:\s+([0-9,]+)/i);
+    const output = pickLog(log, /Output file:\s+(.+)/i);
+    const undated = pickLog(log, /Skipped ([0-9,]+) conversation\(s\) with an unreadable date/i);
+    if (listed) {
+      summary.rows.push({ label: 'In date window', value: `${listed[2]} of ${listed[1]} listed` });
+    }
+    if (scanned) summary.rows.push({ label: 'Conversations read', value: scanned[1] });
+    if (found) summary.rows.push({ label: 'New candidates', value: found[1] });
+    if (rows) summary.rows.push({ label: 'Ready to remove', value: `${rows[1]} in unrequited-love.csv` });
+    if (undated) summary.rows.push({ label: 'Skipped', value: `${undated[1]} with an unreadable date` });
+    if (output) summary.rows.push({ label: 'Output file', value: output[1].trim() });
+    if (listed && listed[3] === '0') {
+      summary.rows.push({
+        label: 'Result',
+        value: 'Everything in this window was already scanned',
+      });
+    }
+    return summary;
+  }
+
   if (job.name === 'remove-dry-run' || job.name === 'remove-execute') {
     const loaded = pickLog(log, /Loaded ([0-9,]+) pending target/i);
     const removed = pickLog(log, /Removed ([0-9,/]+) connections/i);
@@ -483,6 +510,17 @@ app.get('/analytics', (_req, res) => {
     return;
   }
   res.sendFile(ANALYTICS_HTML);
+});
+
+app.get('/unrequited-love.csv', (_req, res) => {
+  if (!fs.existsSync(UNREQUITED_CSV)) {
+    res
+      .status(404)
+      .type('text')
+      .send('No candidates yet. Run an inbox scan from the dashboard first.');
+    return;
+  }
+  res.type('text').send(fs.readFileSync(UNREQUITED_CSV, 'utf8'));
 });
 
 app.use((err, _req, res, _next) => {
