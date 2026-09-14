@@ -43,16 +43,30 @@
       <div class="stat" tabindex="0" data-tooltip="Shows idle when nothing is running, or the name of the active job. Only one job runs at a time."><span>Activity</span><strong id="stat-job">idle</strong></div>
     </section>
 
-    <div class="journey">
+    <section class="workspace-shell" aria-label="Connection Cleaner workspace">
+      <div class="workspace-tabs" role="tablist" aria-label="Workspace sections">
+        <button type="button" role="tab" id="workspace-activity-tab" data-workspace-tab="activity" aria-selected="true" aria-controls="workspace-activity">
+          <span>01</span>
+          <strong>Activity</strong>
+          <small>Login, download and clean up</small>
+        </button>
+        <button type="button" role="tab" id="workspace-analytics-tab" data-workspace-tab="analytics" aria-selected="false" aria-controls="workspace-analytics">
+          <span>02</span>
+          <strong>Analytics</strong>
+          <small>Connections and conversations</small>
+        </button>
+      </div>
+
+      <div id="workspace-activity" class="workspace-panel" role="tabpanel" aria-labelledby="workspace-activity-tab">
+        <div class="journey">
       <nav class="journey-rail" aria-label="Journey steps">
         <p class="rail-label">Your progress</p>
         <ol>
           <li><a href="#step-setup" data-step-link="setup"><span>01</span><div>Set up login<small>Begin here</small></div></a></li>
           <li><a href="#step-download" data-step-link="download"><span>02</span><div>Download connections<small>Create your source list</small></div></a></li>
-          <li><a href="#step-insights" data-step-link="insights"><span>03</span><div>Analytics<small>Connections &amp; conversations</small></div></a></li>
-          <li><a href="#step-inbox" data-step-link="inbox"><span>04</span><div>Search inbox<small>Find unanswered messages</small></div></a></li>
-          <li><a href="#step-review" data-step-link="review"><span>05</span><div>Review results<small>Check before action</small></div></a></li>
-          <li><a href="#step-remove" data-step-link="remove"><span>06</span><div>Remove connections<small>Preview, then execute</small></div></a></li>
+          <li><a href="#step-inbox" data-step-link="inbox"><span>03</span><div>Search inbox<small>Find unanswered messages</small></div></a></li>
+          <li><a href="#step-review" data-step-link="review"><span>04</span><div>Review results<small>Check before action</small></div></a></li>
+          <li><a href="#step-remove" data-step-link="remove"><span>05</span><div>Remove connections<small>Preview, then execute</small></div></a></li>
         </ol>
       </nav>
 
@@ -226,7 +240,7 @@
         </section>
 
         <section class="step-card" id="step-inbox" data-step="inbox">
-          <div class="step-marker"><span>04</span></div>
+          <div class="step-marker"><span>03</span></div>
           <div class="step-content">
             <div class="step-heading"><div><p class="step-kicker">Discover</p><h2>Search for unrequited love</h2><p class="purpose">Find connections who started a conversation but never received a reply from you.</p></div><span class="step-state">Locked</span></div>
             <div class="sequence-note"><span>1</span><p><strong>Cache the conversation list first</strong><small>One pass builds a reusable index without opening threads.</small></p><i>→</i><span>2</span><p><strong>Search recent messages</strong><small>Only new or changed conversations need to be read.</small></p></div>
@@ -243,7 +257,7 @@
         </section>
 
         <section class="step-card" id="step-review" data-step="review">
-          <div class="step-marker"><span>05</span></div>
+          <div class="step-marker"><span>04</span></div>
           <div class="step-content">
             <div class="step-heading"><div><p class="step-kicker">Safety check</p><h2>Review your results</h2><p class="purpose">Inspect the generated candidate list before deciding whether anyone should be removed.</p></div><span class="step-state">Locked</span></div>
             <div class="review-files">
@@ -255,7 +269,7 @@
         </section>
 
         <section class="step-card danger-step" id="step-remove" data-step="remove">
-          <div class="step-marker"><span>06</span></div>
+          <div class="step-marker"><span>05</span></div>
           <div class="step-content">
             <div class="step-heading"><div><p class="step-kicker">Final step</p><h2>Remove connections</h2><p class="purpose">Preview the exact list first. Permanent removal remains a separate, confirmed action.</p></div><span class="step-state">Locked</span></div>
             <div class="safety-banner"><strong>Dry run required first</strong><span>Nothing changes on LinkedIn until you explicitly execute and confirm.</span></div>
@@ -271,35 +285,41 @@
           </div>
         </section>
       </div>
-    </div>
-
-    <section class="jobs-card" id="jobs-pane" aria-labelledby="jobs-title">
-      <div class="jobs-head">
-        <div>
-          <h2 id="jobs-title">Jobs</h2>
-          <p>Live status appears in a window while a job runs. Recent jobs stay here.</p>
         </div>
-        <span id="jobs-summary" class="status-pill idle">Idle</span>
-      </div>
-      <div id="current-job" class="current-job" aria-live="polite">
-        <p class="empty-state">No job is running.</p>
-      </div>
-      <h3>Recent jobs</h3>
-      <ol id="job-history" class="job-history">
-        <li class="empty-state">No completed jobs in this session.</li>
-      </ol>
-    </section>
 
-    <details class="log-card">
-      <summary>
-        <span><strong>Technical log</strong><small>Detailed output and troubleshooting</small></span>
-        <span class="summary-chevron">⌄</span>
-      </summary>
-      <div class="log-head">
-        <button type="button" id="cancel" data-tooltip="Stop the current job and keep any CSV or cache progress already written. Inbox cache can resume from the last saved page.">Stop / pause for now</button>
+        <section class="jobs-card" id="jobs-pane" aria-labelledby="jobs-title">
+          <div class="jobs-head">
+            <div>
+              <h2 id="jobs-title">Jobs</h2>
+              <p>Live status appears in a window while a job runs. Recent jobs stay here.</p>
+            </div>
+            <span id="jobs-summary" class="status-pill idle">Idle</span>
+          </div>
+          <div id="current-job" class="current-job" aria-live="polite">
+            <p class="empty-state">No job is running.</p>
+          </div>
+          <h3>Recent jobs</h3>
+          <ol id="job-history" class="job-history">
+            <li class="empty-state">No completed jobs in this session.</li>
+          </ol>
+        </section>
+
+        <details class="log-card">
+          <summary>
+            <span><strong>Technical log</strong><small>Detailed output and troubleshooting</small></span>
+            <span class="summary-chevron">⌄</span>
+          </summary>
+          <div class="log-head">
+            <button type="button" id="cancel" data-tooltip="Stop the current job and keep any CSV or cache progress already written. Inbox cache can resume from the last saved page.">Stop / pause for now</button>
+          </div>
+          <pre id="log" aria-live="polite" tabindex="0" data-tooltip="Live output from the active job. Scroll here for progress, warnings and errors. This log exists only for the current dashboard server session."></pre>
+        </details>
       </div>
-      <pre id="log" aria-live="polite" tabindex="0" data-tooltip="Live output from the active job. Scroll here for progress, warnings and errors. This log exists only for the current dashboard server session."></pre>
-    </details>
+
+      <div id="workspace-analytics" class="workspace-panel workspace-analytics" role="tabpanel" aria-labelledby="workspace-analytics-tab" hidden>
+        <div id="analytics-mount"></div>
+      </div>
+    </section>
   </main>
 
   <div id="tooltip" class="tooltip" role="tooltip" hidden></div>

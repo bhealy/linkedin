@@ -6,6 +6,54 @@ let tooltipTarget = null;
 let latestStatus = null;
 let intelligenceCacheCount = null;
 let connectionsCacheCount = null;
+let workspaceTab = 'activity';
+
+function showWorkspaceTab(name, options = {}) {
+  const selected = name === 'analytics' ? 'analytics' : 'activity';
+  workspaceTab = selected;
+  document.querySelectorAll('[data-workspace-tab]').forEach((button) => {
+    const active = button.dataset.workspaceTab === selected;
+    button.setAttribute('aria-selected', active ? 'true' : 'false');
+    button.tabIndex = active ? 0 : -1;
+  });
+  document.getElementById('workspace-activity').hidden = selected !== 'activity';
+  document.getElementById('workspace-analytics').hidden = selected !== 'analytics';
+  if (selected === 'analytics') {
+    showAnalyticsTab(intelligence.tab);
+  }
+  if (options.updateHash) {
+    window.history.replaceState(null, '', selected === 'analytics' ? '#analytics' : '#activity');
+  }
+}
+
+function initWorkspaceTabs() {
+  const analyticsCard = document.getElementById('step-insights');
+  document.getElementById('analytics-mount').append(analyticsCard);
+
+  document.querySelectorAll('[data-workspace-tab]').forEach((button) => {
+    button.addEventListener('click', () => {
+      showWorkspaceTab(button.dataset.workspaceTab, { updateHash: true });
+    });
+    button.addEventListener('keydown', (event) => {
+      if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) {
+        return;
+      }
+      event.preventDefault();
+      const next = button.dataset.workspaceTab === 'activity' ? 'analytics' : 'activity';
+      showWorkspaceTab(next, { updateHash: true });
+      document.querySelector(`[data-workspace-tab="${next}"]`).focus();
+    });
+  });
+
+  const legacyConversationHash = window.location.hash === '#step-intelligence';
+  if (legacyConversationHash) {
+    intelligence.tab = 'conversations';
+  }
+  const analyticsHash = ['#analytics', '#step-insights', '#step-intelligence'].includes(
+    window.location.hash
+  );
+  showWorkspaceTab(analyticsHash ? 'analytics' : 'activity');
+}
 
 function positionTooltip(target) {
   const targetRect = target.getBoundingClientRect();
@@ -1033,15 +1081,17 @@ const jobStep = {
 function setStepState(name, state) {
   const card = document.querySelector(`[data-step="${name}"]`);
   const link = document.querySelector(`[data-step-link="${name}"]`);
-  if (!card || !link) {
+  if (!card) {
     return;
   }
   card.classList.toggle('locked', state === 'locked');
   card.classList.toggle('current', state === 'current');
   card.classList.toggle('complete', state === 'complete');
-  link.classList.toggle('current', state === 'current');
-  link.classList.toggle('complete', state === 'complete');
-  link.setAttribute('aria-disabled', state === 'locked' ? 'true' : 'false');
+  if (link) {
+    link.classList.toggle('current', state === 'current');
+    link.classList.toggle('complete', state === 'complete');
+    link.setAttribute('aria-disabled', state === 'locked' ? 'true' : 'false');
+  }
   const stateEl = card.querySelector('.step-state');
   stateEl.textContent = {
     locked: 'Locked',
@@ -1426,12 +1476,13 @@ events.addEventListener('message', (event) => {
 });
 
 restoreRememberedPassword();
-if (window.location.hash === '#step-intelligence') {
-  window.location.hash = '#step-insights';
-  intelligence.tab = 'conversations';
-}
+initWorkspaceTabs();
 refreshStatus()
-  .then(() => showAnalyticsTab(intelligence.tab))
+  .then(() => {
+    if (workspaceTab === 'analytics') {
+      showAnalyticsTab(intelligence.tab);
+    }
+  })
   .catch((err) => appendLog(err.stack || err.message));
 
 setInterval(() => {
