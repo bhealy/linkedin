@@ -77,6 +77,9 @@
         <label>Days back
           <input id="inbox-days" type="number" min="1" value="30" data-tooltip="Only scan connection conversations whose latest activity is within this many days.">
         </label>
+        <label>Parallel tabs
+          <input id="inbox-tabs" type="number" min="1" value="4" data-tooltip="How many Chromium tabs to use at once when reading threads and resolving profile names. Higher is faster; start with 4.">
+        </label>
         <label>Limit threads <span class="hint">(optional)</span>
           <input id="inbox-limit" type="number" min="1" placeholder="all" data-tooltip="Maximum number of unscanned conversations to open in this run. Leave blank for every conversation in the date window.">
         </label>
@@ -173,6 +176,7 @@
       <h2 id="success-title">Download complete</h2>
       <p class="job-detail" id="success-detail"></p>
       <dl id="success-stats" class="stat-list"></dl>
+      <pre id="success-stack" class="result-stack" hidden></pre>
       <div class="row modal-actions">
         <button type="button" id="success-close" class="primary">Close</button>
         <a id="success-review" class="button-link" href="/unrequited-love.csv" target="_blank" rel="noopener" data-tooltip="Open unrequited-love.csv to review the candidates before removing anyone." hidden>Review candidates</a>

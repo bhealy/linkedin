@@ -29,6 +29,14 @@ function cleanLogChunk(chunk) {
     .replace(/\r/g, '\n');
 }
 
+function isErrorHeadline(line) {
+  return /^Error\b/.test(line) || /^[A-Za-z_$][\w$]*(?:Error|Exception)\b/.test(line);
+}
+
+function isStackFrame(line) {
+  return /^\s+at\s/.test(line) || /^\s+\.\.\./.test(line);
+}
+
 function appendLog(text) {
   const pieces = cleanLogChunk(text).split('\n');
   let jobChanged = false;
@@ -47,10 +55,23 @@ function appendLog(text) {
         currentJob.log.splice(0, currentJob.log.length - 800);
       }
     }
+    process.stdout.write(`${line}\n`);
     broadcast({ type: 'log', line });
     if (currentJob && line.trim() && !line.startsWith('──')) {
-      currentJob.statusLine = line.trim();
-      jobChanged = true;
+      if (isErrorHeadline(line)) {
+        currentJob.errorMessage = line.trim();
+        currentJob.errorStack = [line.trim()];
+        currentJob.statusLine = line.trim();
+        jobChanged = true;
+      } else if (isStackFrame(line)) {
+        // Keep the message as the status; collect frames for the failure report.
+        if (currentJob.errorStack && currentJob.errorStack.length < 40) {
+          currentJob.errorStack.push(line);
+        }
+      } else {
+        currentJob.statusLine = line.trim();
+        jobChanged = true;
+      }
     }
   }
   if (jobChanged) {
@@ -111,6 +132,14 @@ function pickLog(log, pattern) {
 }
 
 function summariseJob(job) {
+  const summary = summariseJobOutput(job);
+  if (job.errorMessage) {
+    summary.rows.unshift({ label: 'Error', value: job.errorMessage.replace(/^Error:\s*/, '') });
+  }
+  return summary;
+}
+
+function summariseJobOutput(job) {
   const log = job.log || [];
   const summary = { title: job.label || job.name, rows: [] };
 
@@ -157,6 +186,13 @@ function summariseJob(job) {
     if (scanned) summary.rows.push({ label: 'Conversations read', value: scanned[1] });
     if (found) summary.rows.push({ label: 'New candidates', value: found[1] });
     if (rows) summary.rows.push({ label: 'Ready to remove', value: `${rows[1]} in unrequited-love.csv` });
+    const awaiting = pickLog(log, /Awaiting profile name:\s+([0-9,]+)/i);
+    if (awaiting) {
+      summary.rows.push({
+        label: 'Awaiting profile name',
+        value: `${awaiting[1]} — scan again to finish them`,
+      });
+    }
     if (undated) summary.rows.push({ label: 'Skipped', value: `${undated[1]} with an unreadable date` });
     if (output) summary.rows.push({ label: 'Output file', value: output[1].trim() });
     if (listed && listed[3] === '0') {
@@ -274,6 +310,8 @@ function startJob({ name, label, detail, args, password }) {
 
   child.on('error', (err) => {
     job.statusLine = err.message;
+    job.errorMessage = err.message;
+    job.errorStack = String(err.stack || err.message).split('\n');
     appendLog(err.stack || err.message);
   });
 
@@ -293,6 +331,8 @@ function startJob({ name, label, detail, args, password }) {
       outcome,
       exitCode: code,
       signal: signal || null,
+      errorMessage: job.errorMessage || null,
+      errorStack: job.errorStack || null,
       summary: summariseJob(job),
     };
     jobHistory.unshift(completed);
@@ -415,6 +455,9 @@ app.post('/api/jobs/inbox-scan', (req, res) => {
       String(days),
     ];
     const detailParts = [`last ${days} day${days === 1 ? '' : 's'}`];
+    const tabs = parsePositiveInt(body.tabs, '--tabs') || 4;
+    args.push('--tabs', String(tabs));
+    detailParts.push(`${tabs} tab${tabs === 1 ? '' : 's'}`);
     const limit = parsePositiveInt(body.limit, '--limit');
     if (limit) {
       args.push('--limit', String(limit));

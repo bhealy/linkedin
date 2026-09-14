@@ -211,12 +211,12 @@ npm run scrape:sales:fresh</pre>
 
           <article id="dive-inbox">
             <h3>6. Inbox scan: who never got a reply</h3>
-            <p>Opens LinkedIn Messaging, applies the <strong>Connections</strong> filter so only first-degree threads count, then walks every conversation whose latest activity falls inside <code>--days</code> (default 30). Each thread is opened and scrolled to the very top, so the whole history is read, not just the visible messages.</p>
+            <p>Opens LinkedIn Messaging, applies the <strong>Connections</strong> filter so only first-degree threads count, then walks every conversation whose latest activity falls inside <code>--days</code> (default 30). Threads are opened in parallel Chromium tabs (default 4) and each one is scrolled to the very top, so the whole history is read, not just the visible messages.</p>
             <p>A connection becomes a candidate only when they sent at least one message and you sent <strong>none</strong> in that thread. Candidates are written to <code>unrequited-love.csv</code>; nothing is removed by the scan itself.</p>
             <div class="code-block">
               <button type="button" class="copy-btn" aria-label="Copy code">Copy</button>
               <pre>npm run inbox:scan
-npm run inbox:scan -- --days 90 --limit 50
+npm run inbox:scan -- --days 90 --limit 50 --tabs 4
 npm run inbox:scan:status
 npm run inbox:scan -- --fresh</pre>
             </div>
@@ -229,6 +229,7 @@ npm run inbox:scan -- --fresh</pre>
               <tbody>
                 <tr><td><code>--days</code></td><td>How far back to look, by last activity (default 30)</td></tr>
                 <tr><td><code>--limit</code></td><td>Max unscanned conversations to open this run</td></tr>
+                <tr><td><code>--tabs</code></td><td>Parallel Chromium tabs for reading threads and resolving profile names (default 4)</td></tr>
                 <tr><td><code>--csv</code></td><td>Output path (default <code>unrequited-love.csv</code>)</td></tr>
                 <tr><td><code>--fresh</code></td><td>Back up, then reset the CSV and scan state</td></tr>
                 <tr><td><code>--status</code></td><td>Print scanned, found and ready-to-remove counts</td></tr>

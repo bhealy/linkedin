@@ -20,7 +20,9 @@ const OUTPUT_FILE = path.join(__dirname, 'unrequited-love.csv');
 const STATE_FILE = path.join(__dirname, 'inbox-scan-state.json');
 const STATE_VERSION = 1;
 const DEFAULT_DAYS = 30;
+const DEFAULT_TABS = 4;
 const THREAD_PAUSE_MS = 1500;
+let activeBrowser = null;
 const PROFILE_PAUSE_MS = 2500;
 const CSV_FIELDS = [
   'name',
@@ -39,6 +41,7 @@ function parseArgs(argv) {
   const args = {
     days: DEFAULT_DAYS,
     limit: null,
+    tabs: DEFAULT_TABS,
     fresh: false,
     status: false,
     csv: OUTPUT_FILE,
@@ -53,6 +56,8 @@ function parseArgs(argv) {
       args.days = Number(argv[++i]);
     } else if (arg === '--limit' && argv[i + 1]) {
       args.limit = Number(argv[++i]);
+    } else if (arg === '--tabs' && argv[i + 1]) {
+      args.tabs = Number(argv[++i]);
     } else if (arg === '--csv' && argv[i + 1]) {
       args.csv = path.resolve(argv[++i]);
     }
@@ -62,6 +67,9 @@ function parseArgs(argv) {
   }
   if (args.limit != null && (!Number.isInteger(args.limit) || args.limit < 1)) {
     throw new Error('--limit must be a positive integer.');
+  }
+  if (!Number.isInteger(args.tabs) || args.tabs < 1) {
+    throw new Error('--tabs must be a positive integer.');
   }
   return args;
 }
@@ -199,11 +207,20 @@ async function readConversationList(page) {
         const snippet = clean(
           item.querySelector('[class*="message-snippet"]')?.textContent
         ).slice(0, 80);
+        const href =
+          item.querySelector('a[href*="/messaging/thread/"]')?.href ||
+          item.querySelector('.msg-conversation-listitem__link')?.href ||
+          '';
+        const fromHtml = (item.innerHTML.match(/\/messaging\/thread\/([^"'/?#]+)/) ||
+          [])[1];
+        const threadId = (href.match(/\/messaging\/thread\/([^/?#]+)/) ||
+          [])[1] || fromHtml || '';
         return {
           key: `${name}|${activityText}|${snippet}`,
           name,
           activityText,
           snippet,
+          threadId,
         };
       }
     );
@@ -236,7 +253,10 @@ async function collectConversations(page, cutoff) {
       if (!entry.name) {
         continue;
       }
-      collected.set(entry.key, entry);
+      const existing = collected.get(entry.key);
+      if (!existing || (!existing.threadId && entry.threadId)) {
+        collected.set(entry.key, entry);
+      }
       const activity = parseThreadDate(entry.activityText);
       if (activity && activity.getTime() < cutoff.getTime()) {
         reachedCutoff = true;
@@ -319,6 +339,54 @@ async function openConversation(page, entry) {
   }
 
   return { opened: true, threadId };
+}
+
+function threadUrl(threadId) {
+  return `https://www.linkedin.com/messaging/thread/${threadId}/`;
+}
+
+async function openThreadById(page, threadId) {
+  if (!threadId) {
+    return { opened: false, reason: 'no thread id' };
+  }
+  try {
+    await page.goto(threadUrl(threadId), {
+      waitUntil: 'domcontentloaded',
+      timeout: 60000,
+    });
+    await page.waitForSelector('.msg-s-event-listitem', { timeout: 15000 });
+    return { opened: true, threadId };
+  } catch (err) {
+    console.error(err.stack || err.message);
+    return { opened: false, reason: 'conversation did not open', threadId };
+  }
+}
+
+async function runPool(items, concurrency, workerFn) {
+  let next = 0;
+  const width = Math.max(1, Math.min(concurrency, items.length));
+  await Promise.all(
+    Array.from({ length: width }, (_, workerIndex) =>
+      (async () => {
+        while (true) {
+          const index = next;
+          next += 1;
+          if (index >= items.length) {
+            return;
+          }
+          await workerFn(items[index], index, workerIndex);
+        }
+      })()
+    )
+  );
+}
+
+async function openWorkerPages(browser, count) {
+  const pages = [];
+  for (let i = 0; i < count; i += 1) {
+    pages.push(await browser.newPage());
+  }
+  return pages;
 }
 
 async function scrollWholeThread(page) {
@@ -423,7 +491,7 @@ async function readSelfName(page) {
   return name;
 }
 
-async function resolveVanityNames(page, state) {
+async function resolveVanityNames(pages, state) {
   const pending = Object.entries(state.candidates || {}).filter(
     ([, candidate]) =>
       !candidate.vanityName || isObfuscatedVanity(candidate.vanityName)
@@ -432,27 +500,34 @@ async function resolveVanityNames(page, state) {
     return 0;
   }
 
-  console.log(`Resolving profile names for ${pending.length} candidate(s)…`);
+  const workers = pages.filter(Boolean);
+  if (!workers.length) {
+    throw new Error('No browser tabs available to resolve profile names.');
+  }
+
+  console.log(
+    `Resolving profile names for ${pending.length} candidate(s) across ${workers.length} tab(s)…`
+  );
   let resolved = 0;
 
-  for (const [threadId, candidate] of pending) {
+  await runPool(pending, workers.length, async ([threadId, candidate], _index, workerIndex) => {
     if (!candidate.profileUrl) {
-      continue;
+      return;
     }
+    const page = workers[workerIndex];
     try {
       await page.goto(candidate.profileUrl, {
         waitUntil: 'domcontentloaded',
         timeout: 60000,
       });
       await sleep(PROFILE_PAUSE_MS);
-      const finalUrl = page.url();
-      const vanityName = vanityFromUrl(finalUrl);
+      const vanityName = vanityFromUrl(page.url());
       if (!vanityName || isObfuscatedVanity(vanityName)) {
         console.log(`  ${candidate.name}: could not resolve a profile name`);
-        continue;
+        return;
       }
       state.candidates[threadId] = {
-        ...candidate,
+        ...state.candidates[threadId],
         vanityName,
         profileUrl: `https://www.linkedin.com/in/${vanityName}/`,
       };
@@ -462,20 +537,25 @@ async function resolveVanityNames(page, state) {
     } catch (err) {
       console.error(err.stack || err.message);
     }
-  }
+  });
 
   return resolved;
+}
+
+function countUnresolvedCandidates(state) {
+  return Object.values(state.candidates || {}).filter(
+    (candidate) => !candidate.vanityName || isObfuscatedVanity(candidate.vanityName)
+  ).length;
 }
 
 function printStatus(state, csvPath) {
   const scanned = Object.keys(state.scanned || {}).length;
   const candidates = Object.values(state.candidates || {});
-  const resolved = candidates.filter(
-    (candidate) => candidate.vanityName && !isObfuscatedVanity(candidate.vanityName)
-  ).length;
+  const unresolved = countUnresolvedCandidates(state);
   console.log(`Scanned conversations: ${scanned}`);
   console.log(`Candidates found:      ${candidates.length}`);
-  console.log(`Ready to remove:       ${resolved}`);
+  console.log(`Ready to remove:       ${candidates.length - unresolved}`);
+  console.log(`Awaiting profile name: ${unresolved}`);
   console.log(`Output file:           ${csvPath}`);
 }
 
@@ -499,6 +579,7 @@ async function main() {
 
   try {
     browser = await launchLinkedInBrowser();
+    activeBrowser = browser;
     const page = await browser.newPage();
     await ensureLoggedIn(page, MESSAGING_URL);
     await page.waitForSelector('main', { timeout: 30000 });
@@ -519,92 +600,149 @@ async function main() {
     const pending = inWindow.filter((entry) => !state.scanned[entry.key]);
     const selected = args.limit ? pending.slice(0, args.limit) : pending;
     console.log(
-      `Listed ${total} conversation(s); ${inWindow.length} in window, ${pending.length} unscanned, scanning ${selected.length}.`
+      `Listed ${total} conversation(s); ${inWindow.length} in window, ${pending.length} unscanned, scanning ${selected.length} with ${args.tabs} tab(s).`
     );
 
-    let found = 0;
-    for (let index = 0; index < selected.length; index += 1) {
-      const entry = selected[index];
-      const label = `[${index + 1}/${selected.length}] ${entry.name} (${entry.activityText})`;
-      let outcome;
-
-      try {
-        const opened = await openConversation(page, entry);
-        if (!opened.opened) {
-          console.log(`${label} — skipped: ${opened.reason}`);
-          outcome = { status: 'skipped', reason: opened.reason };
-        } else {
-          await scrollWholeThread(page);
-          const result = await classifyThread(page, selfName);
-          const vanityName = vanityFromUrl(result.profileUrl);
-
-          if (!vanityName) {
-            console.log(`${label} — skipped: no member profile link`);
-            outcome = { status: 'skipped', reason: 'no profile link' };
-          } else if (result.conflicts > 0) {
-            console.log(
-              `${label} — skipped: ${result.conflicts} message(s) with an unclear sender`
-            );
-            outcome = { status: 'skipped', reason: 'unclear sender' };
-          } else if (result.inbound > 0 && result.outbound === 0) {
-            found += 1;
-            state.candidates[opened.threadId] = {
-              name: entry.name,
-              title: result.title,
-              profileUrl: result.profileUrl,
-              vanityName,
-              activityText: entry.activityText,
-              inbound: result.inbound,
-              scannedAt: new Date().toISOString(),
-            };
-            console.log(
-              `${label} — candidate: ${result.inbound} message(s) in, no reply`
-            );
-            outcome = { status: 'candidate', threadId: opened.threadId };
-          } else {
-            console.log(
-              `${label} — keeping: ${result.inbound} in, ${result.outbound} out`
-            );
-            outcome = { status: 'replied' };
-          }
-          outcome = {
-            ...outcome,
-            inbound: result.inbound,
-            outbound: result.outbound,
-            messages: result.events,
-          };
-        }
-      } catch (err) {
-        console.error(err.stack || err.message);
-        outcome = { status: 'error', reason: err.message };
+    const toScan = [];
+    for (const entry of selected) {
+      if (entry.threadId) {
+        toScan.push(entry);
+        continue;
       }
-
-      state.scanned[entry.key] = {
-        ...outcome,
-        name: entry.name,
-        activityText: entry.activityText,
-        scannedAt: new Date().toISOString(),
-      };
-      saveState(state);
-      await sleep(THREAD_PAUSE_MS);
+      const opened = await openConversation(page, entry);
+      if (!opened.opened) {
+        console.log(`${entry.name} (${entry.activityText}) — skipped: ${opened.reason}`);
+        state.scanned[entry.key] = {
+          status: 'skipped',
+          reason: opened.reason,
+          name: entry.name,
+          activityText: entry.activityText,
+          scannedAt: new Date().toISOString(),
+        };
+        saveState(state);
+        continue;
+      }
+      toScan.push({ ...entry, threadId: opened.threadId });
     }
 
-    await resolveVanityNames(page, state);
-    const written = writeCandidatesCsv(state, args.csv);
+    const workers = await openWorkerPages(browser, args.tabs);
+    console.log(`Opened ${workers.length} scan tab(s).`);
 
+    let found = 0;
+    if (toScan.length) {
+      await runPool(toScan, workers.length, async (entry, index, workerIndex) => {
+        const label = `[${index + 1}/${toScan.length}] ${entry.name} (${entry.activityText})`;
+        const worker = workers[workerIndex];
+        let outcome;
+
+        try {
+          const opened = await openThreadById(worker, entry.threadId);
+          if (!opened.opened) {
+            console.log(`${label} — skipped: ${opened.reason}`);
+            outcome = { status: 'skipped', reason: opened.reason };
+          } else {
+            await scrollWholeThread(worker);
+            const result = await classifyThread(worker, selfName);
+            const vanityName = vanityFromUrl(result.profileUrl);
+
+            if (!vanityName) {
+              console.log(`${label} — skipped: no member profile link`);
+              outcome = { status: 'skipped', reason: 'no profile link' };
+            } else if (result.conflicts > 0) {
+              console.log(
+                `${label} — skipped: ${result.conflicts} message(s) with an unclear sender`
+              );
+              outcome = { status: 'skipped', reason: 'unclear sender' };
+            } else if (result.inbound > 0 && result.outbound === 0) {
+              found += 1;
+              state.candidates[opened.threadId] = {
+                name: entry.name,
+                title: result.title,
+                profileUrl: result.profileUrl,
+                vanityName,
+                activityText: entry.activityText,
+                inbound: result.inbound,
+                scannedAt: new Date().toISOString(),
+              };
+              console.log(
+                `${label} — candidate: ${result.inbound} message(s) in, no reply`
+              );
+              outcome = { status: 'candidate', threadId: opened.threadId };
+            } else {
+              console.log(
+                `${label} — keeping: ${result.inbound} in, ${result.outbound} out`
+              );
+              outcome = { status: 'replied' };
+            }
+            outcome = {
+              ...outcome,
+              inbound: result.inbound,
+              outbound: result.outbound,
+              messages: result.events,
+            };
+          }
+        } catch (err) {
+          console.error(err.stack || err.message);
+          outcome = { status: 'error', reason: err.message };
+        }
+
+        state.scanned[entry.key] = {
+          ...outcome,
+          name: entry.name,
+          activityText: entry.activityText,
+          scannedAt: new Date().toISOString(),
+        };
+        saveState(state);
+        await sleep(THREAD_PAUSE_MS);
+      });
+    }
+
+    // A candidate only reaches the CSV once its profile name is resolved, so
+    // always write what we have even if resolving some of them fails.
+    let written = 0;
+    try {
+      await resolveVanityNames(workers.length ? workers : [page], state);
+    } finally {
+      written = writeCandidatesCsv(state, args.csv);
+    }
+
+    const unresolved = countUnresolvedCandidates(state);
     console.log('');
     console.log(`Scanned this run:  ${selected.length}`);
     console.log(`New candidates:    ${found}`);
     console.log(`Rows in CSV:       ${written}`);
+    if (unresolved) {
+      console.log(`Awaiting profile name: ${unresolved} — run the scan again to finish them`);
+    }
     console.log(`Output file:       ${args.csv}`);
     console.log('');
     console.log('Review the CSV, then preview removals with:');
     console.log(`  npm run connections:remove -- --csv ${args.csv} --limit 20`);
   } finally {
-    if (browser) {
-      await browser.close();
-    }
+    await closeActiveBrowser();
   }
+}
+
+async function closeActiveBrowser() {
+  const browser = activeBrowser;
+  activeBrowser = null;
+  if (!browser) {
+    return;
+  }
+  try {
+    await browser.close();
+  } catch (err) {
+    console.error(err.stack || err.message);
+  }
+}
+
+// A cancelled run must not leave Chrome holding the session profile — the next
+// run cannot reuse it while another instance is open.
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  process.on(signal, () => {
+    console.log(`\nReceived ${signal} — closing the LinkedIn browser…`);
+    closeActiveBrowser().finally(() => process.exit(1));
+  });
 }
 
 main().catch((err) => {

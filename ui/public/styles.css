@@ -226,6 +226,10 @@ textarea {
   gap: 10px;
 }
 
+button[hidden], .button-link[hidden] {
+  display: none;
+}
+
 button, .button-link {
   appearance: none;
   border: 1px solid var(--border);
@@ -448,6 +452,14 @@ button.busy::before {
 
 .modal-actions {
   margin-top: 18px;
+}
+
+.result-stack {
+  margin-top: 16px;
+  max-height: 180px;
+  font-size: 0.72rem;
+  color: var(--muted);
+  border: 1px solid rgba(248, 113, 113, 0.25);
 }
 
 .stat-list {

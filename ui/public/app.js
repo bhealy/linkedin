@@ -314,43 +314,66 @@ function parseDownloadSummaryFromLog(text) {
   return rows;
 }
 
-function showSuccessModal(completed, status) {
+function showResultModal(completed, status) {
   const modal = document.getElementById('success-modal');
   const title = document.getElementById('success-title');
   const detail = document.getElementById('success-detail');
   const pill = document.getElementById('success-pill');
   const list = document.getElementById('success-stats');
+  const stack = document.getElementById('success-stack');
   const summary = completed.summary || { rows: [] };
+  const failed = completed.outcome === 'failed';
   const isDownload = completed.name === 'download';
   const isInboxScan = completed.name === 'inbox-scan';
   let rows = [...(summary.rows || [])];
-  if (isDownload && rows.length === 0) {
+  if (isDownload && !failed && rows.length === 0) {
     rows = parseDownloadSummaryFromLog(logEl.textContent || '');
   }
 
-  if (isDownload) {
+  const label = completed.label || completed.name;
+  if (failed) {
+    title.textContent = `${label} failed`;
+  } else if (isDownload) {
     title.textContent = 'Download complete';
   } else if (isInboxScan) {
     title.textContent = 'Inbox scan complete';
   } else {
-    title.textContent = `${completed.label || completed.name} complete`;
+    title.textContent = `${label} complete`;
   }
   detail.textContent = completed.detail || '';
-  pill.className = 'status-pill succeeded';
-  pill.textContent = 'Succeeded';
+  pill.className = `status-pill ${failed ? 'failed' : 'succeeded'}`;
+  pill.textContent = failed ? 'Failed' : 'Succeeded';
+
+  const trace = Array.isArray(completed.errorStack) ? completed.errorStack : [];
+  if (failed && trace.length) {
+    stack.textContent = trace.join('\n');
+    stack.hidden = false;
+  } else {
+    stack.textContent = '';
+    stack.hidden = true;
+  }
 
   list.replaceChildren();
   rows.push({
     label: 'Duration',
     value: formatDuration(completed.durationMs),
   });
-  if (isDownload && status && status.connectionsCount != null) {
+  if (failed && !completed.errorMessage) {
+    rows.push({
+      label: 'Exit code',
+      value: `${completed.exitCode}${completed.signal ? ` (${completed.signal})` : ''}`,
+    });
+  }
+  if (failed) {
+    rows.push({ label: 'Next step', value: 'The full output is in the Log panel below.' });
+  }
+  if (!failed && isDownload && status && status.connectionsCount != null) {
     rows.push({
       label: 'connections.csv now',
       value: Number(status.connectionsCount).toLocaleString(),
     });
   }
-  if (isInboxScan && status && status.unrequitedCount != null) {
+  if (!failed && isInboxScan && status && status.unrequitedCount != null) {
     rows.push({
       label: 'unrequited-love.csv now',
       value: `${Number(status.unrequitedCount).toLocaleString()} candidates`,
@@ -365,7 +388,7 @@ function showSuccessModal(completed, status) {
     list.append(item);
   }
 
-  document.getElementById('success-review').hidden = !isInboxScan;
+  document.getElementById('success-review').hidden = failed || !isInboxScan;
 
   hideRunningModal();
   modal.hidden = false;
@@ -423,7 +446,9 @@ function renderJobs(status) {
       textElement(
         'span',
         'job-stage',
-        item.statusLine || `Process exited with code ${item.exitCode}`
+        item.errorMessage ||
+          item.statusLine ||
+          `Process exited with code ${item.exitCode}`
       ),
       textElement(
         'span',
@@ -516,6 +541,7 @@ document.getElementById('start-inbox-scan').addEventListener('click', async () =
     await postJson('/api/jobs/inbox-scan', {
       password: password(),
       days: document.getElementById('inbox-days').value,
+      tabs: document.getElementById('inbox-tabs').value,
       limit: document.getElementById('inbox-limit').value,
       fresh: document.getElementById('inbox-fresh').checked,
     });
@@ -625,10 +651,13 @@ events.addEventListener('message', (event) => {
       return;
     }
     if (payload.type === 'job') {
-      if (payload.completed && payload.completed.outcome === 'succeeded') {
+      if (
+        payload.completed &&
+        (payload.completed.outcome === 'succeeded' || payload.completed.outcome === 'failed')
+      ) {
         const completed = payload.completed;
         refreshStatus()
-          .then(() => showSuccessModal(completed, latestStatus))
+          .then(() => showResultModal(completed, latestStatus))
           .catch((err) => appendLog(err.stack || err.message));
         return;
       }
