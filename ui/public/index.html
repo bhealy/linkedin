@@ -49,7 +49,7 @@
         <ol>
           <li><a href="#step-setup" data-step-link="setup"><span>01</span><div>Set up login<small>Begin here</small></div></a></li>
           <li><a href="#step-download" data-step-link="download"><span>02</span><div>Download connections<small>Create your source list</small></div></a></li>
-          <li><a href="#step-insights" data-step-link="insights"><span>03</span><div>Explore insights<small>Optional analysis</small></div></a></li>
+          <li><a href="#step-insights" data-step-link="insights"><span>03</span><div>Analytics<small>Connections &amp; conversations</small></div></a></li>
           <li><a href="#step-inbox" data-step-link="inbox"><span>04</span><div>Search inbox<small>Find unanswered messages</small></div></a></li>
           <li><a href="#step-review" data-step-link="review"><span>05</span><div>Review results<small>Check before action</small></div></a></li>
           <li><a href="#step-remove" data-step-link="remove"><span>06</span><div>Remove connections<small>Preview, then execute</small></div></a></li>
@@ -85,12 +85,143 @@
           </div>
         </section>
 
-        <section class="step-card" id="step-insights" data-step="insights">
+        <section class="step-card intelligence-step" id="step-insights" data-step="insights">
           <div class="step-marker"><span>03</span></div>
           <div class="step-content">
-            <div class="step-heading"><div><p class="step-kicker">Optional</p><h2>Explore your network</h2><p class="purpose">Turn connections.csv into a private visual dashboard, and inspect any existing sales classifications.</p></div><span class="step-state">Locked</span></div>
-            <p class="job-hint" id="analytics-status" hidden>Building the dashboard from connections.csv… this can take a minute with a large list.</p>
-            <div class="action-row"><button type="button" id="start-analytics" class="primary" data-tooltip="Rebuild the private connections-analytics.html report and open it.">Generate dashboard</button><a id="open-analytics" class="button-link" href="/analytics" target="_blank" rel="noopener" data-tooltip="Open the most recently generated analytics report.">Open dashboard</a><a class="card-help" href="/docs/readme.html#dive-analytics" target="_blank" rel="noopener">About analytics</a></div>
+            <div class="step-heading">
+              <div>
+                <p class="step-kicker">Private intelligence</p>
+                <h2>Analytics</h2>
+                <p class="purpose">Explore connections and conversations in their own tab. Filters update the charts for the list you are viewing.</p>
+              </div>
+              <span class="step-state">Locked</span>
+            </div>
+
+            <div class="intel-tabs" role="tablist" aria-label="Analytics lists">
+              <button type="button" role="tab" id="tab-connections-btn" data-analytics-tab="connections" aria-selected="true" aria-controls="panel-connections">Connections</button>
+              <button type="button" role="tab" id="tab-conversations-btn" data-analytics-tab="conversations" aria-selected="false" aria-controls="panel-conversations">Conversations</button>
+            </div>
+
+            <div id="panel-connections" role="tabpanel" aria-labelledby="tab-connections-btn">
+              <div class="intel-toolbar conn-toolbar" aria-label="Connection filters">
+                <label>Connected from<input id="conn-from" type="date" data-tooltip="Include people you connected with on or after this date."></label>
+                <label>Connected to<input id="conn-to" type="date" data-tooltip="Include people you connected with on or before this date."></label>
+                <button type="button" id="conn-reset">Reset dates</button>
+                <button type="button" id="start-analytics" data-tooltip="Rebuild the standalone connections-analytics.html report.">Export HTML report</button>
+                <a id="open-analytics" class="button-link" href="/analytics" target="_blank" rel="noopener" data-tooltip="Open the most recently exported HTML report.">Open report</a>
+              </div>
+              <p class="job-hint" id="analytics-status" hidden>Building the dashboard from connections.csv… this can take a minute with a large list.</p>
+              <div id="conn-error" class="intel-message error-message" hidden></div>
+              <div id="conn-empty" class="intel-empty" hidden>
+                <span class="empty-orbit" aria-hidden="true">○</span>
+                <h3>No connections yet</h3>
+                <p>Download your connections first. This tab charts when people were added to your network.</p>
+              </div>
+              <div id="conn-content" hidden>
+                <div class="intel-summary-head">
+                  <div><p class="eyebrow">Network pulse</p><h3 id="conn-result-title">Connection overview</h3></div>
+                  <span id="conn-range-badge" class="cache-badge">All dates</span>
+                </div>
+                <div class="intel-kpis" id="conn-kpis" aria-label="Connection summary"></div>
+                <div class="analytics-grid">
+                  <article class="viz-card timeline-card">
+                    <div class="viz-head"><div><span>When you connected</span><strong>New connections</strong></div><div class="segmented"><button type="button" class="active" data-conn-timeline="month">Month</button><button type="button" data-conn-timeline="year">Year</button></div></div>
+                    <div id="conn-activity-chart" class="activity-chart" role="img" aria-label="Connections made over time"></div>
+                  </article>
+                  <article class="viz-card">
+                    <div class="viz-head"><div><span>Who they are</span><strong>Roles</strong></div></div>
+                    <div id="conn-role-chart" class="donut-layout"></div>
+                  </article>
+                  <article class="viz-card">
+                    <div class="viz-head"><div><span>Seniority</span><strong>Level mix</strong></div></div>
+                    <div id="conn-seniority-chart" class="rank-chart"></div>
+                  </article>
+                  <article class="viz-card coverage-card">
+                    <div class="viz-head"><div><span>Where they work</span><strong>Companies</strong></div></div>
+                    <div id="conn-company-chart" class="rank-chart"></div>
+                  </article>
+                </div>
+              </div>
+            </div>
+
+            <div id="panel-conversations" role="tabpanel" aria-labelledby="tab-conversations-btn" hidden>
+            <div class="intel-toolbar" aria-label="Conversation filters">
+              <label class="intel-search">Search conversations
+                <span class="search-field"><span aria-hidden="true">⌕</span><input id="intel-q" type="search" placeholder="Name, title, snippet or status" autocomplete="off" data-tooltip="Searches names, titles, message snippets, LinkedIn vanity names and scan statuses."></span>
+              </label>
+              <label>Status
+                <select id="intel-status" data-tooltip="Listed conversations have not yet been opened. Candidate means inbound messages with no reply.">
+                  <option value="">All statuses</option>
+                  <option value="candidate">Unrequited</option>
+                  <option value="replied">Replied</option>
+                  <option value="listed">Listed only</option>
+                  <option value="skipped">Skipped</option>
+                  <option value="error">Error</option>
+                </select>
+              </label>
+              <label>Activity from<input id="intel-from" type="date" data-tooltip="Include conversations active on or after this date."></label>
+              <label>Activity to<input id="intel-to" type="date" data-tooltip="Include conversations active on or before this date."></label>
+              <label>Show
+                <select id="intel-kind" data-tooltip="Quickly isolate unrequited, disconnected, protected-title, examined or profile-linked conversations.">
+                  <option value="">Everything</option>
+                  <option value="unrequited">Unrequited only</option>
+                  <option value="disconnected">Disconnected</option>
+                  <option value="protected">Protected titles</option>
+                  <option value="examined">Examined threads</option>
+                  <option value="listed">Listed, not examined</option>
+                  <option value="connected">Profile linked</option>
+                  <option value="unlinked">No linked profile</option>
+                </select>
+              </label>
+              <button type="button" id="intel-reset">Reset filters</button>
+            </div>
+
+            <div id="intel-error" class="intel-message error-message" hidden></div>
+            <div id="intel-empty" class="intel-empty" hidden>
+              <span class="empty-orbit" aria-hidden="true">○</span>
+              <h3>No cached conversations yet</h3>
+              <p>Run “Cache conversation list” in the inbox step. This panel will populate from your private local CSV.</p>
+            </div>
+
+            <div id="intel-content" hidden>
+              <div class="intel-summary-head">
+                <div><p class="eyebrow">Cache pulse</p><h3 id="intel-result-title">Conversation overview</h3></div>
+                <span id="intel-cache-badge" class="cache-badge">Checking cache…</span>
+              </div>
+              <div class="intel-kpis" id="intel-kpis" aria-label="Conversation summary"></div>
+
+              <div class="analytics-grid">
+                <article class="viz-card timeline-card">
+                  <div class="viz-head"><div><span>Activity timeline</span><strong>Conversation volume</strong></div><div class="segmented"><button type="button" class="active" data-timeline="month">Month</button><button type="button" data-timeline="year">Year</button></div></div>
+                  <div id="activity-chart" class="activity-chart" role="img" aria-label="Conversation activity over time"></div>
+                </article>
+                <article class="viz-card">
+                  <div class="viz-head"><div><span>Thread outcomes</span><strong>Scan status</strong></div></div>
+                  <div id="status-chart" class="donut-layout"></div>
+                </article>
+                <article class="viz-card">
+                  <div class="viz-head"><div><span>Who is here</span><strong>Title signals</strong></div></div>
+                  <div id="title-chart" class="rank-chart"></div>
+                </article>
+                <article class="viz-card coverage-card">
+                  <div class="viz-head"><div><span>Cache quality</span><strong>Coverage</strong></div></div>
+                  <div id="coverage-chart" class="coverage-chart"></div>
+                  <p id="group-note" class="chart-note">Group vs 1:1 is unavailable because the cache has no group-thread flag.</p>
+                </article>
+              </div>
+
+              <div class="explorer-head">
+                <div><p class="eyebrow">Conversation explorer</p><h3>Browse the cache</h3></div>
+                <p id="explorer-count">0 conversations</p>
+              </div>
+              <div class="conversation-list" id="conversation-list" aria-live="polite"></div>
+              <div class="explorer-pagination">
+                <button type="button" id="explorer-prev">← Previous</button>
+                <span id="explorer-page">Page 1 of 1</span>
+                <button type="button" id="explorer-next">Next →</button>
+              </div>
+            </div>
+            </div>
           </div>
         </section>
 

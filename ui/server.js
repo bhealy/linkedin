@@ -7,6 +7,16 @@ require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 const { snapshotAll } = require('../lib/rolling-backup');
 const { normalizeKeywords } = require('../lib/keyword-filter');
 const { loadInboxCsv, isUnrequitedCandidate } = require('../lib/inbox-csv');
+const { loadConnectionsCsv } = require('../lib/connections-csv');
+const {
+  filterConversations,
+  computeInboxAnalytics,
+  paginateConversations,
+} = require('../lib/inbox-analytics');
+const {
+  computeConnectionsAnalytics,
+  filterConnectionsByConnectedOn,
+} = require('../lib/connections-analytics');
 
 const ROOT = path.join(__dirname, '..');
 const HOST = '127.0.0.1';
@@ -444,6 +454,47 @@ app.use('/docs', express.static(path.join(ROOT, 'docs')));
 
 app.get('/api/status', (_req, res) => {
   res.json(statusPayload());
+});
+
+app.get('/api/inbox/conversations', (req, res) => {
+  try {
+    const rows = loadInboxCsv(UNREQUITED_CSV);
+    res.json(paginateConversations(rows, req.query));
+  } catch (err) {
+    console.error(err.stack || err.message);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.get('/api/inbox/analytics', (req, res) => {
+  try {
+    const rows = loadInboxCsv(UNREQUITED_CSV);
+    const filtered = filterConversations(rows, req.query);
+    const cacheState = inboxCsvStats();
+    res.json(
+      computeInboxAnalytics(filtered, {
+        cacheComplete: cacheState.inboxCacheComplete,
+      })
+    );
+  } catch (err) {
+    console.error(err.stack || err.message);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.get('/api/connections/analytics', (req, res) => {
+  try {
+    const rows = fs.existsSync(CONNECTIONS_CSV) ? loadConnectionsCsv(CONNECTIONS_CSV) : [];
+    const filtered = filterConnectionsByConnectedOn(rows, req.query);
+    const analytics = computeConnectionsAnalytics(filtered);
+    delete analytics.contacts;
+    analytics.summary.sourceTotal = rows.length;
+    analytics.summary.matched = filtered.length;
+    res.json(analytics);
+  } catch (err) {
+    console.error(err.stack || err.message);
+    res.status(400).json({ error: err.message });
+  }
 });
 
 app.get('/api/events', (req, res) => {

@@ -4,6 +4,8 @@ const passwordEl = document.getElementById('password');
 const tooltipEl = document.getElementById('tooltip');
 let tooltipTarget = null;
 let latestStatus = null;
+let intelligenceCacheCount = null;
+let connectionsCacheCount = null;
 
 function positionTooltip(target) {
   const targetRect = target.getBoundingClientRect();
@@ -207,6 +209,539 @@ async function postJson(url, body) {
   return data;
 }
 
+const intelligence = {
+  page: 1,
+  limit: 40,
+  timeline: 'month',
+  requestId: 0,
+  debounce: null,
+  tab: 'connections',
+};
+
+const connectionsAnalytics = {
+  timeline: 'month',
+  requestId: 0,
+  debounce: null,
+};
+
+function formatCount(value) {
+  return Number(value || 0).toLocaleString();
+}
+
+function formatActivity(value) {
+  if (!value) return 'Date unavailable';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+function safeProfileUrl(value) {
+  if (!value) return '';
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && /(^|\.)linkedin\.com$/i.test(url.hostname)
+      ? url.href
+      : '';
+  } catch (err) {
+    console.error(err.stack || err.message);
+    return '';
+  }
+}
+
+function intelligenceParams(includePage = false) {
+  const params = new URLSearchParams();
+  const values = {
+    q: document.getElementById('intel-q').value,
+    status: document.getElementById('intel-status').value,
+    from: document.getElementById('intel-from').value,
+    to: document.getElementById('intel-to').value,
+  };
+  for (const [key, value] of Object.entries(values)) {
+    if (value) params.set(key, value);
+  }
+  const kind = document.getElementById('intel-kind').value;
+  const kindParams = {
+    unrequited: ['unrequited', 'true'],
+    disconnected: ['disconnected', 'true'],
+    protected: ['protected', 'true'],
+    examined: ['examined', 'true'],
+    listed: ['examined', 'false'],
+    connected: ['connected', 'true'],
+    unlinked: ['connected', 'false'],
+  };
+  if (kindParams[kind]) params.set(kindParams[kind][0], kindParams[kind][1]);
+  if (includePage) {
+    params.set('page', intelligence.page);
+    params.set('limit', intelligence.limit);
+  }
+  return params;
+}
+
+function createKpi(label, value, note, color) {
+  const card = document.createElement('div');
+  card.className = 'intel-kpi';
+  card.style.setProperty('--kpi-glow', color);
+  card.append(
+    textElement('span', '', label),
+    textElement('strong', '', value),
+    textElement('small', '', note)
+  );
+  return card;
+}
+
+function renderIntelligenceKpis(summary) {
+  const el = document.getElementById('intel-kpis');
+  const coverage = summary.total ? Math.round((summary.examined / summary.total) * 100) : 0;
+  const range = summary.oldestActivity && summary.newestActivity
+    ? `${formatActivity(summary.oldestActivity)} → ${formatActivity(summary.newestActivity)}`
+    : 'No readable activity dates';
+  el.replaceChildren(
+    createKpi('Conversations', formatCount(summary.total), `${formatCount(summary.dated)} dated`, 'rgba(75,181,247,.12)'),
+    createKpi('Unrequited', formatCount(summary.unrequited), 'Inbound, no reply', 'rgba(255,200,107,.13)'),
+    createKpi('Replied', formatCount(summary.replied), 'Two-way threads', 'rgba(98,215,162,.12)'),
+    createKpi('Examined', `${coverage}%`, `${formatCount(summary.listedOnly)} listed only`, 'rgba(154,126,255,.12)'),
+    createKpi('Activity range', formatCount(summary.dated), range, 'rgba(75,181,247,.1)')
+  );
+}
+
+function renderTimelineChart(containerId, data, options = {}) {
+  const container = document.getElementById(containerId);
+  const yearMode = Boolean(options.yearMode);
+  const unit = options.unit || 'items';
+  container.replaceChildren();
+  if (!data.length) {
+    container.append(textElement('p', 'empty-state', 'No readable dates in this selection.'));
+    return;
+  }
+
+  const width = 620;
+  const height = 205;
+  const pad = { top: 12, right: 10, bottom: 27, left: 10 };
+  const max = Math.max(...data.map((item) => item.count), 1);
+  const x = (index) => pad.left + (index / Math.max(1, data.length - 1)) * (width - pad.left - pad.right);
+  const y = (count) => pad.top + (1 - count / max) * (height - pad.top - pad.bottom);
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+  svg.setAttribute('preserveAspectRatio', 'none');
+  const defs = document.createElementNS(ns, 'defs');
+  const gradient = document.createElementNS(ns, 'linearGradient');
+  const gradientId = `${containerId}-fill`;
+  gradient.id = gradientId;
+  gradient.setAttribute('x1', '0');
+  gradient.setAttribute('y1', '0');
+  gradient.setAttribute('x2', '0');
+  gradient.setAttribute('y2', '1');
+  [['0%', '.28'], ['100%', '0']].forEach(([offset, opacity]) => {
+    const stop = document.createElementNS(ns, 'stop');
+    stop.setAttribute('offset', offset);
+    stop.setAttribute('stop-color', '#4bb5f7');
+    stop.setAttribute('stop-opacity', opacity);
+    gradient.append(stop);
+  });
+  defs.append(gradient);
+  svg.append(defs);
+  [0, .5, 1].forEach((ratio) => {
+    const line = document.createElementNS(ns, 'line');
+    line.setAttribute('x1', pad.left);
+    line.setAttribute('x2', width - pad.right);
+    line.setAttribute('y1', y(max * ratio));
+    line.setAttribute('y2', y(max * ratio));
+    line.setAttribute('class', 'chart-grid');
+    svg.append(line);
+  });
+  const points = data.map((item, index) => `${x(index)},${y(item.count)}`).join(' ');
+  const area = document.createElementNS(ns, 'path');
+  area.setAttribute('class', 'chart-area');
+  area.setAttribute('d', `M ${x(0)} ${height - pad.bottom} L ${points.replace(/ /g, ' L ')} L ${x(data.length - 1)} ${height - pad.bottom} Z`);
+  area.setAttribute('fill', `url(#${gradientId})`);
+  const line = document.createElementNS(ns, 'polyline');
+  line.setAttribute('class', 'chart-line');
+  line.setAttribute('points', points);
+  svg.append(area, line);
+  const labelEvery = Math.max(1, Math.ceil(data.length / 6));
+  data.forEach((item, index) => {
+    if (index % labelEvery === 0 || index === data.length - 1) {
+      const label = document.createElementNS(ns, 'text');
+      label.setAttribute('class', 'axis-label');
+      label.setAttribute('x', x(index));
+      label.setAttribute('y', height - 6);
+      label.setAttribute('text-anchor', index === 0 ? 'start' : index === data.length - 1 ? 'end' : 'middle');
+      label.textContent = item.label;
+      svg.append(label);
+    }
+    if (data.length <= 24 || index % labelEvery === 0) {
+      const dot = document.createElementNS(ns, 'circle');
+      dot.setAttribute('class', 'chart-dot');
+      dot.setAttribute('cx', x(index));
+      dot.setAttribute('cy', y(item.count));
+      dot.setAttribute('r', '3');
+      const title = document.createElementNS(ns, 'title');
+      title.textContent = `${item.label}: ${formatCount(item.count)} ${unit}`;
+      dot.append(title);
+      svg.append(dot);
+    }
+  });
+  container.append(svg);
+}
+
+function renderTimeline(analytics) {
+  const data = intelligence.timeline === 'year'
+    ? analytics.charts.activityByYear
+    : analytics.charts.activityByMonth;
+  renderTimelineChart('activity-chart', data, {
+    yearMode: intelligence.timeline === 'year',
+    unit: 'conversations',
+  });
+}
+
+function renderDonut(containerId, items, total, centerLabel = 'threads') {
+  const el = document.getElementById(containerId);
+  const colors = ['#55bcfb', '#62d7a2', '#ffc86b', '#a78bfa', '#ff707b', '#667085'];
+  let cursor = 0;
+  const stops = items.map((item, index) => {
+    const start = cursor;
+    cursor += total ? (item.count / total) * 100 : 0;
+    return `${colors[index % colors.length]} ${start}% ${cursor}%`;
+  });
+  const donut = document.createElement('div');
+  donut.className = 'donut';
+  donut.style.setProperty('--donut', stops.join(',') || '#192131 0 100%');
+  const center = document.createElement('div');
+  center.className = 'donut-center';
+  center.append(textElement('strong', '', formatCount(total)), textElement('span', '', centerLabel));
+  donut.append(center);
+  const legend = document.createElement('div');
+  legend.className = 'chart-legend';
+  items.slice(0, 6).forEach((item, index) => {
+    const row = document.createElement('div');
+    row.className = 'legend-row';
+    const dot = document.createElement('i');
+    dot.style.setProperty('--color', colors[index % colors.length]);
+    row.append(dot, textElement('span', '', item.label), textElement('b', '', formatCount(item.count)));
+    legend.append(row);
+  });
+  el.replaceChildren(donut, legend);
+}
+
+function renderRankChart(containerId, items) {
+  const el = document.getElementById(containerId);
+  const max = Math.max(...items.map((item) => item.count), 1);
+  el.replaceChildren();
+  items.slice(0, 7).forEach((item) => {
+    const row = document.createElement('div');
+    row.className = 'rank-row';
+    const track = document.createElement('div');
+    track.className = 'rank-track';
+    const bar = document.createElement('i');
+    bar.style.setProperty('--width', `${(item.count / max) * 100}%`);
+    track.append(bar);
+    row.append(textElement('span', '', item.label), track, textElement('b', '', formatCount(item.count)));
+    el.append(row);
+  });
+}
+
+function renderCoverage(summary) {
+  const el = document.getElementById('coverage-chart');
+  const items = [
+    ['Threads examined', summary.examined, '#62d7a2'],
+    ['Profiles linked', summary.profileLinked, '#55bcfb'],
+    ['Activity date readable', summary.dated, '#a78bfa'],
+    ['Protected titles', summary.protectedTitles, '#ffc86b'],
+  ];
+  el.replaceChildren();
+  items.forEach(([label, count, color]) => {
+    const pct = summary.total ? Math.round((count / summary.total) * 100) : 0;
+    const item = document.createElement('div');
+    item.className = 'coverage-item';
+    const copy = document.createElement('div');
+    copy.className = 'coverage-copy';
+    copy.append(textElement('span', '', label), textElement('strong', '', `${pct}% · ${formatCount(count)}`));
+    const track = document.createElement('div');
+    track.className = 'coverage-track';
+    const bar = document.createElement('i');
+    bar.style.setProperty('--width', `${pct}%`);
+    bar.style.setProperty('--color', color);
+    track.append(bar);
+    item.append(copy, track);
+    el.append(item);
+  });
+}
+
+function renderConversationList(payload) {
+  const el = document.getElementById('conversation-list');
+  el.replaceChildren();
+  payload.rows.forEach((row) => {
+    const profileUrl = safeProfileUrl(row.profileUrl);
+    const item = document.createElement(profileUrl ? 'a' : 'div');
+    item.className = 'conversation-row';
+    if (profileUrl) {
+      item.href = profileUrl;
+      item.target = '_blank';
+      item.rel = 'noopener';
+    }
+    const person = document.createElement('div');
+    person.className = 'conversation-person';
+    person.append(
+      textElement('strong', '', row.name || 'Unnamed conversation'),
+      textElement('span', '', row.profileLinked ? 'LinkedIn profile available' : 'No linked profile')
+    );
+    const title = document.createElement('div');
+    title.className = 'conversation-title';
+    title.append(
+      textElement('span', '', row.title || 'Title unavailable'),
+      textElement('small', '', row.protectedTitle ? 'Protected title match' : 'Standard title')
+    );
+    const message = document.createElement('div');
+    message.className = 'conversation-message';
+    message.append(
+      textElement('p', '', row.snippet || 'No cached snippet'),
+      textElement('small', '', `Last activity · ${formatActivity(row.lastActivityIso || row.lastActivity)}`)
+    );
+    const state = document.createElement('div');
+    state.className = 'conversation-state';
+    state.append(
+      textElement('span', `status-chip ${row.status}`, row.unrequited ? 'unrequited' : row.status),
+      textElement(
+        'span',
+        'conversation-flags',
+        [
+          row.disconnected ? 'Disconnected' : null,
+          row.examined ? 'Examined' : 'Listed only',
+        ].filter(Boolean).join(' · ')
+      )
+    );
+    item.append(person, title, message, state);
+    el.append(item);
+  });
+  const pagination = payload.pagination;
+  document.getElementById('explorer-count').textContent = `${formatCount(pagination.total)} conversation${pagination.total === 1 ? '' : 's'}`;
+  document.getElementById('explorer-page').textContent = `Page ${pagination.page} of ${pagination.pageCount}`;
+  document.getElementById('explorer-prev').disabled = pagination.page <= 1;
+  document.getElementById('explorer-next').disabled = pagination.page >= pagination.pageCount;
+}
+
+function renderIntelligence(analytics, conversations) {
+  const empty = document.getElementById('intel-empty');
+  const content = document.getElementById('intel-content');
+  const hasAnyCache = latestStatus && Number(latestStatus.conversationCount) > 0;
+  if (analytics.summary.total === 0) {
+    empty.querySelector('h3').textContent = hasAnyCache
+      ? 'No conversations match these filters'
+      : 'No cached conversations yet';
+    empty.querySelector('p').textContent = hasAnyCache
+      ? 'Try a broader search, date range, or status.'
+      : 'Run “Cache conversation list” above. This panel will populate from your private local CSV.';
+    empty.hidden = false;
+    content.hidden = true;
+    return;
+  }
+  empty.hidden = true;
+  content.hidden = false;
+  document.getElementById('intel-result-title').textContent =
+    intelligenceParams().toString() ? 'Filtered conversation view' : 'Conversation overview';
+  const cacheBadge = document.getElementById('intel-cache-badge');
+  cacheBadge.textContent = analytics.summary.cacheComplete ? 'Full list cached' : 'Partial cache · insights still live';
+  cacheBadge.classList.toggle('complete', analytics.summary.cacheComplete);
+  renderIntelligenceKpis(analytics.summary);
+  renderTimeline(analytics);
+  renderDonut('status-chart', analytics.charts.statuses, analytics.summary.total, 'threads');
+  renderRankChart('title-chart', analytics.charts.titleBuckets);
+  renderCoverage(analytics.summary);
+  renderConversationList(conversations);
+}
+
+async function loadIntelligence() {
+  const requestId = ++intelligence.requestId;
+  const error = document.getElementById('intel-error');
+  error.hidden = true;
+  try {
+    const analyticsQuery = intelligenceParams();
+    const listQuery = intelligenceParams(true);
+    const [analyticsResponse, conversationsResponse] = await Promise.all([
+      fetch(`/api/inbox/analytics?${analyticsQuery}`),
+      fetch(`/api/inbox/conversations?${listQuery}`),
+    ]);
+    if (!analyticsResponse.ok || !conversationsResponse.ok) {
+      throw new Error(`Conversation data request failed (${analyticsResponse.status}/${conversationsResponse.status})`);
+    }
+    const [analytics, conversations] = await Promise.all([
+      analyticsResponse.json(),
+      conversationsResponse.json(),
+    ]);
+    if (requestId !== intelligence.requestId) return;
+    intelligence.page = conversations.pagination.page;
+    renderIntelligence(analytics, conversations);
+  } catch (err) {
+    console.error(err.stack || err.message);
+    if (requestId !== intelligence.requestId) return;
+    error.textContent = 'Conversation intelligence could not be loaded. Check the technical log and try again.';
+    error.hidden = false;
+  }
+}
+
+function scheduleIntelligenceLoad() {
+  window.clearTimeout(intelligence.debounce);
+  intelligence.debounce = window.setTimeout(() => {
+    intelligence.page = 1;
+    loadIntelligence();
+  }, 180);
+}
+
+['intel-q', 'intel-status', 'intel-from', 'intel-to', 'intel-kind'].forEach((id) => {
+  const input = document.getElementById(id);
+  input.addEventListener(input.tagName === 'INPUT' && input.type === 'search' ? 'input' : 'change', scheduleIntelligenceLoad);
+});
+document.getElementById('intel-reset').addEventListener('click', () => {
+  ['intel-q', 'intel-status', 'intel-from', 'intel-to', 'intel-kind'].forEach((id) => {
+    document.getElementById(id).value = '';
+  });
+  intelligence.page = 1;
+  loadIntelligence();
+});
+document.getElementById('explorer-prev').addEventListener('click', () => {
+  intelligence.page -= 1;
+  loadIntelligence();
+});
+document.getElementById('explorer-next').addEventListener('click', () => {
+  intelligence.page += 1;
+  loadIntelligence();
+});
+document.querySelectorAll('[data-timeline]').forEach((button) => {
+  button.addEventListener('click', () => {
+    intelligence.timeline = button.dataset.timeline;
+    document.querySelectorAll('[data-timeline]').forEach((item) => {
+      item.classList.toggle('active', item === button);
+    });
+    loadIntelligence();
+  });
+});
+
+function connectionParams() {
+  const params = new URLSearchParams();
+  const from = document.getElementById('conn-from').value;
+  const to = document.getElementById('conn-to').value;
+  if (from) params.set('from', from);
+  if (to) params.set('to', to);
+  return params;
+}
+
+function renderConnectionKpis(summary) {
+  const el = document.getElementById('conn-kpis');
+  const peak = summary.peakMonth
+    ? `${summary.peakMonth.label} · ${formatCount(summary.peakMonth.count)}`
+    : 'No dated peak';
+  el.replaceChildren(
+    createKpi('In range', formatCount(summary.matched ?? summary.total), `${formatCount(summary.sourceTotal || summary.total)} in CSV`, 'rgba(75,181,247,.12)'),
+    createKpi('Still connected', formatCount(summary.connected), `${formatCount(summary.disconnected)} disconnected`, 'rgba(98,215,162,.12)'),
+    createKpi('Dated', formatCount(summary.dated), `${summary.datedPct || 0}% of connected`, 'rgba(154,126,255,.12)'),
+    createKpi('Last 12 months', formatCount(summary.last365Days), `${formatCount(summary.last30Days)} in 30 days`, 'rgba(255,200,107,.13)'),
+    createKpi('Peak month', formatCount(summary.peakMonth ? summary.peakMonth.count : 0), peak, 'rgba(75,181,247,.1)')
+  );
+}
+
+function renderConnectionsAnalytics(analytics) {
+  const empty = document.getElementById('conn-empty');
+  const content = document.getElementById('conn-content');
+  const hasAny = latestStatus && Number(latestStatus.connectionsCount) > 0;
+  if (!analytics.summary.total) {
+    empty.querySelector('h3').textContent = hasAny
+      ? 'No connections in this date range'
+      : 'No connections yet';
+    empty.querySelector('p').textContent = hasAny
+      ? 'Widen the connected-on dates, or reset the filter.'
+      : 'Download your connections first. This tab charts when people were added to your network.';
+    empty.hidden = false;
+    content.hidden = true;
+    return;
+  }
+  empty.hidden = true;
+  content.hidden = false;
+  const filtered = Boolean(document.getElementById('conn-from').value || document.getElementById('conn-to').value);
+  document.getElementById('conn-result-title').textContent = filtered
+    ? 'Filtered connection view'
+    : 'Connection overview';
+  const badge = document.getElementById('conn-range-badge');
+  badge.textContent = filtered
+    ? `${formatCount(analytics.summary.matched)} of ${formatCount(analytics.summary.sourceTotal)}`
+    : 'All dates';
+  badge.classList.toggle('complete', !filtered);
+  renderConnectionKpis(analytics.summary);
+  const timelineData = connectionsAnalytics.timeline === 'year'
+    ? analytics.charts.activityByYear
+    : analytics.charts.timeline;
+  renderTimelineChart('conn-activity-chart', timelineData, {
+    yearMode: connectionsAnalytics.timeline === 'year',
+    unit: 'connections',
+  });
+  renderDonut('conn-role-chart', analytics.charts.roles, analytics.summary.connected, 'roles');
+  renderRankChart('conn-seniority-chart', analytics.charts.seniority);
+  renderRankChart('conn-company-chart', analytics.charts.companies);
+}
+
+async function loadConnectionsAnalytics() {
+  const requestId = ++connectionsAnalytics.requestId;
+  const error = document.getElementById('conn-error');
+  error.hidden = true;
+  try {
+    const response = await fetch(`/api/connections/analytics?${connectionParams()}`);
+    if (!response.ok) {
+      throw new Error(`Connection analytics request failed (${response.status})`);
+    }
+    const analytics = await response.json();
+    if (requestId !== connectionsAnalytics.requestId) return;
+    renderConnectionsAnalytics(analytics);
+  } catch (err) {
+    console.error(err.stack || err.message);
+    if (requestId !== connectionsAnalytics.requestId) return;
+    error.textContent = 'Connection analytics could not be loaded. Check the technical log and try again.';
+    error.hidden = false;
+  }
+}
+
+function scheduleConnectionsLoad() {
+  window.clearTimeout(connectionsAnalytics.debounce);
+  connectionsAnalytics.debounce = window.setTimeout(() => {
+    loadConnectionsAnalytics();
+  }, 180);
+}
+
+function showAnalyticsTab(name) {
+  intelligence.tab = name;
+  document.querySelectorAll('[data-analytics-tab]').forEach((button) => {
+    const selected = button.dataset.analyticsTab === name;
+    button.setAttribute('aria-selected', selected ? 'true' : 'false');
+  });
+  document.getElementById('panel-connections').hidden = name !== 'connections';
+  document.getElementById('panel-conversations').hidden = name !== 'conversations';
+  if (name === 'conversations') {
+    loadIntelligence();
+  } else {
+    loadConnectionsAnalytics();
+  }
+}
+
+['conn-from', 'conn-to'].forEach((id) => {
+  document.getElementById(id).addEventListener('change', scheduleConnectionsLoad);
+});
+document.getElementById('conn-reset').addEventListener('click', () => {
+  document.getElementById('conn-from').value = '';
+  document.getElementById('conn-to').value = '';
+  loadConnectionsAnalytics();
+});
+document.querySelectorAll('[data-conn-timeline]').forEach((button) => {
+  button.addEventListener('click', () => {
+    connectionsAnalytics.timeline = button.dataset.connTimeline;
+    document.querySelectorAll('[data-conn-timeline]').forEach((item) => {
+      item.classList.toggle('active', item === button);
+    });
+    loadConnectionsAnalytics();
+  });
+});
+document.querySelectorAll('[data-analytics-tab]').forEach((button) => {
+  button.addEventListener('click', () => showAnalyticsTab(button.dataset.analyticsTab));
+});
+
 function appendLog(line) {
   logEl.textContent += `${line}\n`;
   logEl.scrollTop = logEl.scrollHeight;
@@ -216,7 +751,7 @@ function setAnalyticsRunning(running) {
   const btn = document.getElementById('start-analytics');
   const hint = document.getElementById('analytics-status');
   btn.classList.toggle('busy', running);
-  btn.textContent = running ? 'Generating…' : 'Generate dashboard';
+  btn.textContent = running ? 'Exporting…' : 'Export HTML report';
   hint.hidden = !running;
 }
 
@@ -540,8 +1075,8 @@ function renderJourney(status) {
   const busy = Boolean(status.job);
   const hasEmail = Boolean(status.email);
   const hasConnections = Number(status.connectionsCount) > 0;
-  const hasInsights = Boolean(status.analyticsExists) || Number(status.salesCount) > 0;
   const hasInbox = Boolean(status.inboxCacheComplete) || Number(status.conversationCount) > 0;
+  const hasInsights = hasConnections || hasInbox;
   const hasDryRun = (status.history || []).some(
     (job) => job.name === 'remove-dry-run' && job.outcome === 'succeeded'
   );
@@ -615,7 +1150,11 @@ function renderStatus(status) {
   if (!status) {
     return;
   }
+  const cacheCountChanged = intelligenceCacheCount !== Number(status.conversationCount || 0);
+  const hasConnectionsChanged = connectionsCacheCount !== Number(status.connectionsCount || 0);
   latestStatus = status;
+  intelligenceCacheCount = Number(status.conversationCount || 0);
+  connectionsCacheCount = Number(status.connectionsCount || 0);
   document.getElementById('stat-email').textContent = status.email || 'not set';
   document.getElementById('stat-csv').textContent = String(status.connectionsCount ?? 0);
   document.getElementById('stat-sales').textContent = String(status.salesCount ?? 0);
@@ -654,6 +1193,16 @@ function renderStatus(status) {
   setInboxScanRunning(inboxRunning, status.job && status.job.name === 'inbox-cache' ? 'cache' : 'scan');
   renderJobs(status);
   renderJourney(status);
+  if (cacheCountChanged) {
+    if (intelligence.tab === 'conversations') {
+      loadIntelligence();
+    }
+  }
+  if (hasConnectionsChanged) {
+    if (intelligence.tab === 'connections') {
+      loadConnectionsAnalytics();
+    }
+  }
 }
 
 async function refreshStatus() {
@@ -877,7 +1426,13 @@ events.addEventListener('message', (event) => {
 });
 
 restoreRememberedPassword();
-refreshStatus().catch((err) => appendLog(err.stack || err.message));
+if (window.location.hash === '#step-intelligence') {
+  window.location.hash = '#step-insights';
+  intelligence.tab = 'conversations';
+}
+refreshStatus()
+  .then(() => showAnalyticsTab(intelligence.tab))
+  .catch((err) => appendLog(err.stack || err.message));
 
 setInterval(() => {
   if (latestStatus && latestStatus.job) {
