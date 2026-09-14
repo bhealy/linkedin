@@ -193,11 +193,16 @@ function summariseJobOutput(job) {
   if (job.name === 'inbox-scan' || job.name === 'inbox-cache') {
     const listed = pickLog(
       log,
-      /Listed ([0-9,]+) conversation\(s\); ([0-9,]+) in the latest window, ([0-9,]+) need a thread read/i
+      /Listed ([0-9,]+) (?:connection )?conversation\(s\)(?: of [0-9,]+)?; ([0-9,]+) in the latest window, ([0-9,]+) need a thread read/i
     );
     const listedLegacy = pickLog(
       log,
       /Listed ([0-9,]+) conversation\(s\); ([0-9,]+) in window, ([0-9,]+) unscanned/i
+    );
+    const threadsListed = pickLog(log, /Threads listed:\s+([0-9,]+)/i);
+    const notConnected = pickLog(
+      log,
+      /Skipped ([0-9,]+) conversation\(s\) not in connections\.csv and ([0-9,]+) group thread\(s\)/i
     );
     const cacheListed = pickLog(log, /Listed this run:\s+([0-9,]+)/i);
     const cacheSize = pickLog(log, /Conversation cache:\s+([0-9,]+)/i);
@@ -212,6 +217,13 @@ function summariseJobOutput(job) {
     if (match) {
       summary.rows.push({ label: 'Latest window', value: `${match[2]} of ${match[1]} listed` });
       summary.rows.push({ label: 'Need a thread read', value: match[3] });
+    }
+    if (threadsListed) summary.rows.push({ label: 'Threads listed', value: threadsListed[1] });
+    if (notConnected) {
+      summary.rows.push({
+        label: 'Not connections',
+        value: `${notConnected[1]} skipped · ${notConnected[2]} group thread(s)`,
+      });
     }
     if (cacheListed) summary.rows.push({ label: 'Listed this run', value: cacheListed[1] });
     if (cacheSize) summary.rows.push({ label: 'Conversation cache', value: cacheSize[1] });
@@ -228,8 +240,15 @@ function summariseJobOutput(job) {
     }
     if (undated) summary.rows.push({ label: 'Skipped', value: `${undated[1]} with an unreadable date` });
     if (output) summary.rows.push({ label: 'Output file', value: output[1].trim() });
+    const oldest = pickLog(log, /Oldest conversation:\s+(.+)/i);
+    if (oldest) summary.rows.push({ label: 'Oldest conversation', value: oldest[1].trim() });
     if (caught) {
       summary.rows.push({ label: 'List', value: 'Stopped at the saved conversation cache' });
+    } else {
+      const stopped = pickLog(log, /List stopped: (.+)/i);
+      if (stopped) {
+        summary.rows.push({ label: 'List stopped', value: stopped[1].replace(/\.$/, '') });
+      }
     }
     if (match && match[3] === '0') {
       summary.rows.push({
@@ -244,8 +263,14 @@ function summariseJobOutput(job) {
     const loaded = pickLog(log, /Loaded ([0-9,]+) pending target/i);
     const removed = pickLog(log, /Removed ([0-9,/]+) connections/i);
     const keywords = pickLog(log, /Title keywords \(match any\):\s+(.+)/i);
+    const protectedCount = pickLog(log, /Protected by safe list:\s+([0-9,]+)/i);
+    const wouldRemove = pickLog(log, /Would remove:\s+([0-9,]+)/i);
     if (loaded) summary.rows.push({ label: 'Pending targets', value: loaded[1] });
     if (keywords) summary.rows.push({ label: 'Keywords', value: keywords[1].trim() });
+    if (protectedCount) {
+      summary.rows.push({ label: 'Protected by safe list', value: protectedCount[1] });
+    }
+    if (wouldRemove) summary.rows.push({ label: 'Would remove', value: wouldRemove[1] });
     if (removed) summary.rows.push({ label: 'Removed', value: removed[1] });
     if (job.name === 'remove-dry-run') {
       summary.rows.push({ label: 'Mode', value: 'Dry run — nothing was removed' });
@@ -564,6 +589,14 @@ app.post('/api/jobs/remove', (req, res) => {
     if (keywords.length) {
       args.push('--keywords', keywords.join(','));
     }
+    const protectUnrequited = body.protectUnrequited !== false;
+    const safeKeywords = normalizeKeywords(body.safeKeywords);
+    if (!protectUnrequited) {
+      args.push('--no-unrequited-safe-list');
+    }
+    if (safeKeywords.length) {
+      args.push('--safe-keywords', safeKeywords.join(','));
+    }
     const limit = parsePositiveInt(body.limit, '--limit');
     if (limit) {
       args.push('--limit', String(limit));
@@ -575,6 +608,12 @@ app.post('/api/jobs/remove', (req, res) => {
         path.basename(csvChoice),
         body.status ? `status: ${body.status}` : 'all statuses',
         keywords.length ? `title: ${keywords.join(' OR ')}` : null,
+        csvChoice === UNREQUITED_CSV
+          ? `safe list ${protectUnrequited ? 'on' : 'off'}`
+          : null,
+        csvChoice === UNREQUITED_CSV && safeKeywords.length
+          ? `extra protected: ${safeKeywords.join(' OR ')}`
+          : null,
         limit ? `limit ${limit}` : null,
       ]
         .filter(Boolean)
@@ -612,6 +651,22 @@ app.get('/analytics', (_req, res) => {
     return;
   }
   res.sendFile(ANALYTICS_HTML);
+});
+
+app.get('/connections.csv', (_req, res) => {
+  if (!fs.existsSync(CONNECTIONS_CSV)) {
+    res.status(404).type('text').send('No connections yet. Download them first.');
+    return;
+  }
+  res.type('text/csv').sendFile(CONNECTIONS_CSV);
+});
+
+app.get('/sales-connections.csv', (_req, res) => {
+  if (!fs.existsSync(SALES_CSV)) {
+    res.status(404).type('text').send('No sales search results yet.');
+    return;
+  }
+  res.type('text/csv').sendFile(SALES_CSV);
 });
 
 app.get('/unrequited-love.csv', (_req, res) => {

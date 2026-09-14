@@ -473,6 +473,131 @@ function renderJobs(status) {
   }
 }
 
+const jobStep = {
+  download: 'download',
+  analytics: 'insights',
+  'inbox-scan': 'inbox',
+  'inbox-cache': 'inbox',
+  'remove-dry-run': 'remove',
+  'remove-execute': 'remove',
+};
+
+function setStepState(name, state) {
+  const card = document.querySelector(`[data-step="${name}"]`);
+  const link = document.querySelector(`[data-step-link="${name}"]`);
+  if (!card || !link) {
+    return;
+  }
+  card.classList.toggle('locked', state === 'locked');
+  card.classList.toggle('current', state === 'current');
+  card.classList.toggle('complete', state === 'complete');
+  link.classList.toggle('current', state === 'current');
+  link.classList.toggle('complete', state === 'complete');
+  link.setAttribute('aria-disabled', state === 'locked' ? 'true' : 'false');
+  const stateEl = card.querySelector('.step-state');
+  stateEl.textContent = {
+    locked: 'Locked',
+    current: 'Current step',
+    complete: 'Complete',
+    available: 'Available',
+  }[state];
+}
+
+function setReviewFileState(id, available) {
+  const link = document.getElementById(id);
+  if (!link) {
+    return;
+  }
+  link.closest('.review-file').classList.toggle('unavailable', !available);
+  link.setAttribute('aria-disabled', available ? 'false' : 'true');
+}
+
+function selectedSourceAvailable(status) {
+  const source = document.getElementById('csv-source').value;
+  if (source === 'sales') {
+    return Number(status.salesCount) > 0;
+  }
+  if (source === 'unrequited') {
+    return Number(status.conversationCount) > 0;
+  }
+  return Number(status.connectionsCount) > 0;
+}
+
+function renderJourney(status) {
+  const busy = Boolean(status.job);
+  const hasEmail = Boolean(status.email);
+  const hasConnections = Number(status.connectionsCount) > 0;
+  const hasInsights = Boolean(status.analyticsExists) || Number(status.salesCount) > 0;
+  const hasInbox = Boolean(status.inboxCacheComplete) || Number(status.conversationCount) > 0;
+  const hasDryRun = (status.history || []).some(
+    (job) => job.name === 'remove-dry-run' && job.outcome === 'succeeded'
+  );
+
+  const states = {
+    setup: hasEmail ? 'complete' : 'current',
+    download: !hasEmail ? 'locked' : hasConnections ? 'complete' : 'current',
+    insights: !hasConnections ? 'locked' : hasInsights ? 'complete' : 'available',
+    inbox: !hasConnections ? 'locked' : hasInbox ? 'complete' : 'current',
+    review: !hasConnections ? 'locked' : hasDryRun ? 'complete' : hasInbox ? 'current' : 'available',
+    remove: !hasConnections ? 'locked' : hasDryRun ? 'current' : 'available',
+  };
+  if (status.job && jobStep[status.job.name]) {
+    const activeStep = jobStep[status.job.name];
+    for (const name of Object.keys(states)) {
+      if (name === activeStep) {
+        states[name] = 'current';
+      } else if (states[name] === 'current') {
+        states[name] = 'available';
+      }
+    }
+  }
+  for (const [name, state] of Object.entries(states)) {
+    setStepState(name, state);
+  }
+
+  document.getElementById('start-download').disabled = busy || !hasEmail;
+  document.getElementById('start-analytics').disabled = busy || !hasConnections;
+  document.getElementById('start-inbox-scan').disabled = busy || !hasConnections;
+  document.getElementById('start-inbox-cache').disabled = busy || !hasConnections;
+  const sourceAvailable = selectedSourceAvailable(status);
+  document.getElementById('start-dry').disabled = busy || !sourceAvailable;
+  document.getElementById('start-execute').disabled = busy || !sourceAvailable || !hasDryRun;
+  document.getElementById('start-execute').title = hasDryRun
+    ? ''
+    : 'Complete a successful dry run first.';
+
+  setReviewFileState('open-connections', hasConnections);
+  setReviewFileState('open-sales', Number(status.salesCount) > 0);
+  setReviewFileState('open-unrequited', Number(status.conversationCount) > 0);
+  document.getElementById('open-analytics').classList.toggle(
+    'unavailable',
+    !status.analyticsExists
+  );
+  document.getElementById('review-candidate-count').textContent = Number(
+    status.unrequitedCount || 0
+  ).toLocaleString();
+
+  const journeyStatus = document.getElementById('journey-status');
+  const journeyDetail = document.getElementById('journey-detail');
+  const heroStatus = journeyStatus.closest('.hero-status');
+  heroStatus.classList.toggle('running', busy);
+  if (busy) {
+    journeyStatus.textContent = status.job.label || status.job.name;
+    journeyDetail.textContent = status.job.statusLine || 'Starting…';
+  } else if (!hasEmail) {
+    journeyStatus.textContent = 'Ready when you are';
+    journeyDetail.textContent = 'Begin with your login details';
+  } else if (!hasConnections) {
+    journeyStatus.textContent = 'Login setup complete';
+    journeyDetail.textContent = 'Next: download your connections';
+  } else {
+    journeyStatus.textContent = `${Number(status.connectionsCount).toLocaleString()} connections ready`;
+    journeyDetail.textContent = hasInbox
+      ? 'Review your results or continue safely'
+      : 'Next: explore insights or search your inbox';
+  }
+}
+
 function renderStatus(status) {
   if (!status) {
     return;
@@ -511,6 +636,7 @@ function renderStatus(status) {
   setAnalyticsRunning(analyticsRunning);
   setInboxScanRunning(inboxRunning, status.job && status.job.name === 'inbox-cache' ? 'cache' : 'scan');
   renderJobs(status);
+  renderJourney(status);
 }
 
 async function refreshStatus() {
@@ -538,6 +664,10 @@ document.getElementById('save-email').addEventListener('click', async () => {
     await postJson('/api/setup', { email: emailEl.value });
     appendLog('Saved LINKEDIN_EMAIL to .env (password was not written).');
     await refreshStatus();
+    document.getElementById('step-download').scrollIntoView({
+      behavior: 'smooth',
+      block: 'center',
+    });
   } catch (err) {
     appendLog(err.stack || err.message);
   }
@@ -617,6 +747,8 @@ function removePayload(execute) {
     csv: document.getElementById('csv-source').value,
     status: document.getElementById('status').value,
     keywords: document.getElementById('rm-keywords').value,
+    protectUnrequited: document.getElementById('rm-protect-unrequited').checked,
+    safeKeywords: document.getElementById('rm-safe-keywords').value,
     limit: document.getElementById('rm-limit').value,
   };
 }
@@ -667,6 +799,19 @@ document.getElementById('success-close').addEventListener('click', () => {
 
 document.getElementById('success-backdrop').addEventListener('click', () => {
   hideSuccessModal();
+});
+
+document.querySelector('.journey-rail').addEventListener('click', (event) => {
+  const link = event.target.closest('a[aria-disabled="true"]');
+  if (link) {
+    event.preventDefault();
+  }
+});
+
+document.getElementById('csv-source').addEventListener('change', () => {
+  if (latestStatus) {
+    renderJourney(latestStatus);
+  }
 });
 
 const events = new EventSource('/api/events');

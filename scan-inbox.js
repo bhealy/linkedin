@@ -8,6 +8,8 @@ const {
   sleep,
 } = require('./lib/linkedin-auth');
 const { cutoffForDays, parseThreadDate } = require('./lib/inbox-thread-date');
+const { loadConnectionsCsv } = require('./lib/connections-csv');
+const { buildConnectionIndex, matchConnection } = require('./lib/connection-index');
 const {
   applyExamineOutcome,
   isUnrequitedCandidate,
@@ -25,10 +27,17 @@ const {
 
 const MESSAGING_URL = 'https://www.linkedin.com/messaging/';
 const OUTPUT_FILE = path.join(__dirname, 'unrequited-love.csv');
+const CONNECTIONS_FILE = path.join(__dirname, 'connections.csv');
 const STATE_FILE = path.join(__dirname, 'inbox-scan-state.json');
 const STATE_VERSION = 2;
 const DEFAULT_DAYS = 30;
 const DEFAULT_TABS = 4;
+const MAX_LIST_ROUNDS = 1500;
+const LIST_PAUSE_MS = 900;
+const LIST_STALL_PAUSE_MS = 2500;
+const LIST_STALL_LIMIT = 10;
+const CACHE_PERSIST_EVERY = 25;
+const LIST_RECOVERY_LIMIT = 3;
 const THREAD_PAUSE_MS = 1500;
 let activeBrowser = null;
 const PROFILE_PAUSE_MS = 2500;
@@ -188,44 +197,6 @@ function hydrateRowsFromState(rows, state) {
   }
 }
 
-const CONNECTIONS_FILTER_STATE = () => {
-  const element = [...document.querySelectorAll('button, [role="button"]')].find(
-    (candidate) => candidate.textContent.trim() === 'Connections'
-  );
-  if (!element) {
-    return 'missing';
-  }
-  const selected =
-    element.getAttribute('aria-pressed') === 'true' ||
-    element.getAttribute('aria-checked') === 'true' ||
-    element.getAttribute('aria-selected') === 'true' ||
-    /\bactive\b|\bselected\b/.test(element.className);
-  return selected ? 'selected' : 'available';
-};
-
-async function selectConnectionsFilter(page) {
-  await page.waitForFunction(
-    () =>
-      [...document.querySelectorAll('button, [role="button"]')].some(
-        (candidate) => candidate.textContent.trim() === 'Connections'
-      ),
-    { timeout: 30000 }
-  );
-
-  if ((await page.evaluate(CONNECTIONS_FILTER_STATE)) === 'available') {
-    await page.evaluate(() => {
-      [...document.querySelectorAll('button, [role="button"]')]
-        .find((candidate) => candidate.textContent.trim() === 'Connections')
-        ?.click();
-    });
-    await sleep(2000);
-  }
-
-  if ((await page.evaluate(CONNECTIONS_FILTER_STATE)) !== 'selected') {
-    throw new Error('LinkedIn did not apply the Connections inbox filter.');
-  }
-}
-
 async function readConversationList(page) {
   return page.evaluate(() => {
     const clean = (value) => String(value || '').replace(/\s+/g, ' ').trim();
@@ -268,26 +239,138 @@ async function scrollConversationList(page) {
     if (!list) {
       throw new Error('Could not find the inbox conversation list.');
     }
-    const before = list.scrollTop;
-    list.scrollTop = list.scrollHeight;
-    return list.scrollTop > before;
+
+    // The scrollable element is sometimes the list and sometimes an ancestor.
+    let pane = list;
+    while (pane && pane !== document.body && pane.scrollHeight <= pane.clientHeight + 4) {
+      pane = pane.parentElement;
+    }
+    if (!pane || pane === document.body) {
+      pane = list;
+    }
+
+    const items = list.querySelectorAll('li.msg-conversation-listitem');
+    const last = items[items.length - 1];
+    const before = pane.scrollTop;
+    last?.scrollIntoView({ block: 'end' });
+    pane.scrollTop = pane.scrollHeight;
+
+    const container =
+      list.closest('[class*="msg-conversations-container"]') || list;
+    [...container.querySelectorAll('button')]
+      .find((button) =>
+        /load more|show more|older conversations/i.test(button.textContent)
+      )
+      ?.click();
+
+    const busy = Boolean(
+      document.querySelector(
+        '.msg-conversations-container__loader, [class*="conversations-list"] [class*="loader"], [class*="conversations"] [aria-busy="true"]'
+      )
+    );
+
+    return { moved: pane.scrollTop > before, count: items.length, busy };
   });
 }
 
-async function collectConversations(page, { cutoff, fullList, cacheComplete, cacheRows }) {
+function isLostContext(err) {
+  return /Execution context was destroyed|Target closed|detached Frame|Session closed|Navigating frame/i.test(
+    String(err && err.message)
+  );
+}
+
+function oldestActivityLabel(entries) {
+  let oldest = null;
+  let label = '';
+  for (const entry of entries) {
+    const activity = parseThreadDate(entry.activityText);
+    if (!activity) {
+      continue;
+    }
+    if (!oldest || activity.getTime() < oldest.getTime()) {
+      oldest = activity;
+      label = entry.activityText;
+    }
+  }
+  return label;
+}
+
+async function collectConversations(
+  page,
+  { cutoff, fullList, cacheComplete, cacheRows, connectionIndex, onProgress }
+) {
   const collected = new Map();
-  let stableRounds = 0;
+  const classified = new Map();
+  const skipped = { group: 0, notConnected: 0 };
+  let stalls = 0;
+  let recoveries = 0;
   let reachedCutoff = false;
   let caughtUp = false;
-  const maxRounds = fullList ? 400 : 200;
+  let stopReason = `hit the ${MAX_LIST_ROUNDS}-round scroll limit`;
 
-  for (let round = 0; round < maxRounds && stableRounds < 4; round += 1) {
-    const batch = await readConversationList(page);
-    const before = collected.size;
-    for (const entry of batch) {
+  const attempt = async (fn) => {
+    try {
+      return { ok: true, value: await fn() };
+    } catch (err) {
+      return { ok: false, err };
+    }
+  };
+
+  // Messaging sometimes navigates under us on a long list; reload and carry on
+  // rather than losing the walk. Already-seen threads are deduped on the way back.
+  const recover = async (err) => {
+    console.error(err.stack || err.message);
+    if (!isLostContext(err) || recoveries >= LIST_RECOVERY_LIMIT) {
+      stopReason = isLostContext(err)
+        ? `the messaging page reloaded more than ${LIST_RECOVERY_LIMIT} time(s)`
+        : `the conversation list could not be read (${err.message})`;
+      return false;
+    }
+    recoveries += 1;
+    console.log(
+      `Messaging page navigated away — reopening and resuming (recovery ${recoveries}/${LIST_RECOVERY_LIMIT})…`
+    );
+    await page.goto(MESSAGING_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForSelector('li.msg-conversation-listitem', { timeout: 30000 });
+    await sleep(2000);
+    stalls = 0;
+    return true;
+  };
+
+  for (let round = 0; round < MAX_LIST_ROUNDS; round += 1) {
+    const read = await attempt(() => readConversationList(page));
+    if (!read.ok) {
+      if (!(await recover(read.err))) {
+        break;
+      }
+      continue;
+    }
+
+    const batch = [];
+    for (const entry of read.value) {
       if (!entry.name) {
         continue;
       }
+      if (!classified.has(entry.key)) {
+        const { match, ambiguous, reason } = matchConnection(connectionIndex, entry.name);
+        if (reason === 'group') {
+          skipped.group += 1;
+        } else if (reason !== 'connection') {
+          skipped.notConnected += 1;
+        }
+        classified.set(
+          entry.key,
+          reason === 'connection' ? { ...entry, connection: ambiguous ? null : match } : null
+        );
+      }
+      const known = classified.get(entry.key);
+      if (known) {
+        batch.push(entry.threadId && !known.threadId ? { ...known, threadId: entry.threadId } : known);
+      }
+    }
+
+    const before = collected.size;
+    for (const entry of batch) {
       const existing = collected.get(entry.key);
       if (!existing || (!existing.threadId && entry.threadId)) {
         collected.set(entry.key, entry);
@@ -297,7 +380,19 @@ async function collectConversations(page, { cutoff, fullList, cacheComplete, cac
         reachedCutoff = true;
       }
     }
-    stableRounds = collected.size === before ? stableRounds + 1 : 0;
+
+    const grew = collected.size > before;
+    stalls = grew ? 0 : stalls + 1;
+    if (grew) {
+      const label = oldestActivityLabel(collected.values());
+      console.log(
+        `Listing… ${collected.size} connection conversation(s) of ${classified.size} listed${
+          label ? `, back to ${label}` : ''
+        }`
+      );
+      onProgress?.([...collected.values()]);
+    }
+
     if (
       !fullList &&
       cacheComplete &&
@@ -306,13 +401,29 @@ async function collectConversations(page, { cutoff, fullList, cacheComplete, cac
       listCaughtUp(batch, cacheRows)
     ) {
       caughtUp = true;
+      stopReason = 'caught up with the saved conversation cache';
       break;
     }
     if (!fullList && reachedCutoff) {
+      stopReason = 'reached the date window cutoff';
       break;
     }
-    await scrollConversationList(page);
-    await sleep(900);
+
+    const scroll = await attempt(() => scrollConversationList(page));
+    if (!scroll.ok) {
+      if (!(await recover(scroll.err))) {
+        break;
+      }
+      continue;
+    }
+    const scrolled = scroll.value;
+    // LinkedIn fetches the next page only after the list bottom is reached, so
+    // give a stalled list progressively longer to answer before giving up.
+    if (stalls >= LIST_STALL_LIMIT && !scrolled.busy) {
+      stopReason = `no new conversations after ${LIST_STALL_LIMIT} attempts`;
+      break;
+    }
+    await sleep(stalls || scrolled.busy ? LIST_STALL_PAUSE_MS : LIST_PAUSE_MS);
   }
 
   const inWindow = [];
@@ -331,7 +442,16 @@ async function collectConversations(page, { cutoff, fullList, cacheComplete, cac
       inWindow.push(entry);
     }
   }
-  return { inWindow, total: collected.size, undated, caughtUp };
+  return {
+    inWindow,
+    total: collected.size,
+    listed: classified.size,
+    skipped,
+    undated,
+    caughtUp,
+    stopReason,
+    oldest: oldestActivityLabel(collected.values()),
+  };
 }
 
 async function openConversation(page, entry) {
@@ -631,6 +751,13 @@ async function main() {
   const rows = loadInboxCsv(args.csv);
   hydrateRowsFromState(rows, state);
   const cutoff = cutoffForDays(args.days);
+  const connectionIndex = buildConnectionIndex(loadConnectionsCsv(CONNECTIONS_FILE));
+  if (!connectionIndex.size) {
+    throw new Error(
+      `No connections found in ${CONNECTIONS_FILE}. Download your connections first — the inbox scan matches conversation names against that list.`
+    );
+  }
+  console.log(`Matching conversations against ${connectionIndex.size} connection name(s).`);
   let browser;
 
   try {
@@ -643,12 +770,13 @@ async function main() {
     const selfName = await readSelfName(page);
     console.log(`Signed in as ${selfName}`);
 
-    console.log('Applying the Connections inbox filter…');
-    await selectConnectionsFilter(page);
     await page.waitForSelector('li.msg-conversation-listitem', { timeout: 30000 });
 
     if (args.cache) {
       console.log('Caching the full conversation list…');
+      state.cacheComplete = false;
+      state.cacheCompletedAt = '';
+      saveState(state);
     } else if (state.cacheComplete) {
       console.log(
         `Loading latest messages (cache has ${rows.length} conversation(s))…`
@@ -657,18 +785,40 @@ async function main() {
       console.log(`Loading conversations active in the last ${args.days} day(s)…`);
     }
 
-    const { inWindow, total, undated, caughtUp } = await collectConversations(page, {
-      cutoff,
-      fullList: args.cache,
-      cacheComplete: state.cacheComplete,
-      cacheRows: rows,
-    });
+    let persistedAt = rows.length;
+    const { inWindow, total, listed, skipped, undated, caughtUp, stopReason, oldest } =
+      await collectConversations(page, {
+        cutoff,
+        fullList: args.cache,
+        cacheComplete: state.cacheComplete,
+        cacheRows: rows,
+        connectionIndex,
+        onProgress: args.cache
+          ? (entries) => {
+              for (const entry of entries) {
+                upsertListedConversation(rows, entry);
+              }
+              if (rows.length - persistedAt >= CACHE_PERSIST_EVERY) {
+                persistCsv(rows, args.csv);
+                persistedAt = rows.length;
+              }
+            }
+          : null,
+      });
+    if (skipped.notConnected || skipped.group) {
+      console.log(
+        `Skipped ${skipped.notConnected} conversation(s) not in connections.csv and ${skipped.group} group thread(s).`
+      );
+    }
     if (undated) {
       console.log(`Skipped ${undated} conversation(s) with an unreadable date.`);
     }
     if (caughtUp) {
       console.log('Caught up with the saved conversation cache.');
     }
+    console.log(
+      `List stopped: ${stopReason}${oldest ? ` (oldest listed ${oldest})` : ''}.`
+    );
 
     for (const entry of inWindow) {
       upsertListedConversation(rows, entry);
@@ -676,12 +826,22 @@ async function main() {
     persistCsv(rows, args.csv);
 
     if (args.cache) {
-      state.cacheComplete = true;
-      state.cacheCompletedAt = new Date().toISOString();
+      // Only a list that ran out of conversations is a complete cache; a reload
+      // or the round limit means there is more history still to walk.
+      const reachedEnd = /no new conversations/.test(stopReason);
+      state.cacheComplete = reachedEnd;
+      state.cacheCompletedAt = reachedEnd ? new Date().toISOString() : '';
       saveState(state);
+      if (!reachedEnd) {
+        console.log('Cache is partial — run it again to continue from the newest messages.');
+      }
       console.log('');
+      console.log(`Threads listed:      ${listed}`);
       console.log(`Listed this run:     ${inWindow.length}`);
       console.log(`Conversation cache:  ${rows.length}`);
+      if (oldest) {
+        console.log(`Oldest conversation: ${oldest}`);
+      }
       console.log(`Output file:         ${args.csv}`);
       return;
     }
@@ -691,7 +851,7 @@ async function main() {
     );
     const selected = args.limit ? pending.slice(0, args.limit) : pending;
     console.log(
-      `Listed ${total} conversation(s); ${inWindow.length} in the latest window, ${pending.length} need a thread read, reading ${selected.length} with ${args.tabs} tab(s).`
+      `Listed ${total} connection conversation(s) of ${listed}; ${inWindow.length} in the latest window, ${pending.length} need a thread read, reading ${selected.length} with ${args.tabs} tab(s).`
     );
 
     const toScan = [];

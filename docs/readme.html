@@ -211,8 +211,8 @@ npm run scrape:sales:fresh</pre>
 
           <article id="dive-inbox">
             <h3>6. Search for unrequited love</h3>
-            <p>Opens LinkedIn Messaging, applies the <strong>Connections</strong> filter, then reads connection threads whose latest activity falls inside <code>--days</code> (default 30). Threads are opened in parallel Chromium tabs (default 4) and scrolled to the top. A conversation is stored in <code>unrequited-love.csv</code> the first time it is seen. Later runs skip threads whose last activity has not changed.</p>
-            <p>A connection becomes a candidate only when they sent at least one message and you sent <strong>none</strong> in that thread. Candidate rows are the ones the Remove card uses; replied and listed rows stay in the same CSV as the cache. Nothing is removed by the search itself.</p>
+            <p>Opens LinkedIn Messaging and lists every conversation, matching each name against <code>connections.csv</code> to decide who is a connection, then reads the matched threads whose latest activity falls inside <code>--days</code> (default 30). LinkedIn’s own <strong>Connections</strong> inbox filter is not used: it stops serving results after roughly 100 threads, so it hides most of your history. Download your connections before searching, and group threads are skipped. Threads are opened in parallel Chromium tabs (default 4) and scrolled to the top. A conversation is stored in <code>unrequited-love.csv</code> the first time it is seen. Later runs skip threads whose last activity has not changed.</p>
+            <p>A connection becomes a candidate only when they sent at least one message and you sent <strong>none</strong> in that thread. Candidate rows are the ones the Remove card uses; replied and listed rows stay in the same CSV as the cache. Nothing is removed by the search itself. Successful removals are immediately marked <code>disconnected=yes</code> with a timestamp in this CSV, so later searches and removal runs skip them without losing the conversation history.</p>
             <p>Use <strong>Cache conversation list</strong> (<code>--cache</code>) once to scroll the whole inbox and save every connection conversation without opening threads. After that, a search only loads the latest messages until it catches up with the cache, then decides from the CSV which threads still need a read.</p>
             <div class="code-block">
               <button type="button" class="copy-btn" aria-label="Copy code">Copy</button>
@@ -222,7 +222,7 @@ npm run inbox:scan -- --days 90 --limit 50 --tabs 4
 npm run inbox:scan:status
 npm run inbox:scan -- --fresh</pre>
             </div>
-            <p>Every message counts, including attachments and emoji, so an image-only reply from you still protects that connection from being flagged. Thread headers often use obfuscated member ids, so each candidate's profile is visited once to resolve the vanity name before it is ready to remove.</p>
+            <p>Every message counts, including attachments and emoji, so an image-only reply from you still protects that connection from being flagged. A matched conversation inherits the profile URL from <code>connections.csv</code>; where two connections share a name, the candidate's profile is visited once to resolve the vanity name before it is ready to remove.</p>
             <table>
               <thead>
                 <tr><th>Flag</th><th>Description</th></tr>
@@ -247,7 +247,7 @@ npm run connections:remove -- --execute --csv unrequited-love.csv --limit 20</pr
 
           <article id="dive-remove">
             <h3>7. Bulk remove</h3>
-            <p>Omit <code>--execute</code> to print who would be removed. Removals are permanent on LinkedIn. Default ignored company names in headlines: Manna and Meili (add more with <code>--ignore-company</code>). Spacing is about 1.2 seconds between removals. Removed vanity names are remembered so later runs skip them.</p>
+            <p>Omit <code>--execute</code> to print who would be removed. Removals are permanent on LinkedIn. When the source is an inbox CSV such as <code>unrequited-love.csv</code>, a safe list is on by default and protects founders, C-suite leaders, investors, board members and selected owner/partner roles. Add protected phrases with <code>--safe-keywords</code>, or deliberately disable this protection with <code>--no-unrequited-safe-list</code>. The dry run reports protected and would-remove counts. Default ignored company names in headlines: Manna and Meili (add more with <code>--ignore-company</code>). Spacing is about 1.2 seconds between removals. Removed vanity names are remembered and marked in both the source inbox CSV and master <code>connections.csv</code>, so later runs skip them.</p>
             <div class="code-block">
               <button type="button" class="copy-btn" aria-label="Copy code">Copy</button>
               <pre>npm run connections:remove -- --status spam --limit 20
@@ -264,6 +264,8 @@ npm run connections:remove -- --execute --status sales --limit 50</pre>
                 <tr><td><code>--status</code></td><td><code>spam</code>, <code>sales</code>, <code>recruitment</code>, <code>sales_and_recruitment</code>, <code>not_target</code></td></tr>
                 <tr><td><code>--limit</code></td><td>Max people this run</td></tr>
                 <tr><td><code>--ignore-company</code></td><td>Skip headlines that mention this company (repeatable)</td></tr>
+                <tr><td><code>--safe-keywords</code></td><td>Add comma-separated protected title words or phrases for inbox CSV removals</td></tr>
+                <tr><td><code>--no-unrequited-safe-list</code></td><td>Turn off the default protected-title list for inbox CSV removals</td></tr>
                 <tr><td><code>--csv</code></td><td>Different input CSV</td></tr>
                 <tr><td><code>--fresh</code></td><td>Clear removal history</td></tr>
               </tbody>

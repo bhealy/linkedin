@@ -12,7 +12,7 @@
 <body>
   <div class="bg" aria-hidden="true"></div>
   <header>
-    <div class="brand" tabindex="0" data-tooltip="LinkedIn Connection Cleaner runs entirely on this computer and helps you download, analyse and selectively remove first-degree connections."><span class="mark">in</span> Connection Cleaner</div>
+    <div class="brand" tabindex="0" data-tooltip="LinkedIn Connection Cleaner runs entirely on this computer and helps you download, analyse and selectively remove first-degree connections."><span class="mark">in</span><span>Connection Cleaner<small>Private workspace</small></span></div>
     <div class="head-right">
       <nav class="docs-nav">
         <a href="/docs/index.html#wizard" target="_blank" rel="noopener" data-tooltip="Open the eight-step local walkthrough covering installation, downloading, analytics, removal and privacy.">Setup wizard</a>
@@ -23,107 +23,123 @@
   </header>
 
   <main>
-    <p class="lead">Drive download, analytics, unrequited-love search, and removals from this page. LinkedIn login still opens in Puppeteer’s Chromium window when needed. Your password is sent only with the job that needs it and is never written to <code>.env</code>; it is kept in this browser only if you tick “Remember for 30 days”.</p>
-
-    <p class="lead">New here? The <a href="/docs/index.html#wizard" target="_blank" rel="noopener" data-tooltip="Open the guided eight-step introduction in a new tab. It is served locally and works offline.">step-by-step wizard</a> walks through every stage in order, and the <a href="/docs/readme.html" target="_blank" rel="noopener" data-tooltip="Open the full local reference in a new tab, with both a short summary and detailed instructions.">full guide</a> has an executive summary plus a deeper dive on how each part works. Both are served from this machine, so they work offline.</p>
-
-    <section class="stats" id="stats" aria-label="Current application status">
-      <div class="stat" tabindex="0" data-tooltip="The LinkedIn account email currently stored in the local .env file. Your password is never stored here."><strong id="stat-email">—</strong><span>Email in .env</span></div>
-      <div class="stat" tabindex="0" data-tooltip="The number of connection records in the local master connections.csv file, including records marked as disconnected."><strong id="stat-csv">0</strong><span>connections.csv</span></div>
-      <div class="stat" tabindex="0" data-tooltip="The number of title-classified records in sales-connections.csv from the optional sales and recruitment search."><strong id="stat-sales">0</strong><span>sales-connections.csv</span></div>
-      <div class="stat" tabindex="0" data-tooltip="The number of connections who messaged you in an inbox thread where you never replied."><strong id="stat-unrequited">0</strong><span>unrequited-love.csv</span></div>
-      <div class="stat" tabindex="0" data-tooltip="Shows idle when nothing is running, or the name of the active download, analytics, inbox scan or removal job. Only one job runs at a time."><strong id="stat-job">idle</strong><span>Current job</span></div>
+    <section class="hero">
+      <div>
+        <p class="eyebrow">Your connection clean-up journey</p>
+        <h1>A clearer network,<br><em>one careful step at a time.</em></h1>
+        <p class="lead">Start by setting up your LinkedIn login. We’ll unlock each next step as your local files become ready—nothing is sent anywhere except LinkedIn.</p>
+      </div>
+      <div class="hero-status">
+        <span class="pulse-dot"></span>
+        <div><strong id="journey-status">Checking your progress…</strong><span id="journey-detail">Reading local workspace</span></div>
+      </div>
     </section>
 
-    <div class="grid">
-      <section class="card">
-        <h2>Setup <a class="card-help" href="/docs/readme.html#dive-setup" target="_blank" rel="noopener" data-tooltip="Jump to the setup section of the full local guide.">Explain this</a></h2>
-        <label>LinkedIn email
-          <input id="email" type="email" autocomplete="username" placeholder="you@example.com" data-tooltip="Enter the email address used to sign into LinkedIn. Save writes only this email to the local .env file.">
-        </label>
-        <label>Password <span class="hint" id="password-hint">(this run only)</span>
-          <input id="password" type="password" autocomplete="current-password" data-tooltip="Used only if LinkedIn needs a fresh login. It is passed directly to the job that needs it and is never written to .env.">
-        </label>
-        <label class="check" data-tooltip="Keep this password in your browser's local storage on this machine for 30 days so you do not retype it. It is stored in plain text and readable by anyone with access to this browser profile. Untick to erase it immediately."><input id="remember" type="checkbox"> Remember for 30 days</label>
-        <p class="job-hint" id="remember-status" hidden></p>
-        <button type="button" id="save-email" data-tooltip="Validate this email and save it as LINKEDIN_EMAIL in the local .env file for future runs. The password is not saved.">Save email to .env</button>
-      </section>
+    <section class="stats" id="stats" aria-label="Current application status">
+      <div class="stat" tabindex="0" data-tooltip="The LinkedIn account email currently stored in the local .env file. Your password is never stored here."><span>Email</span><strong id="stat-email">—</strong></div>
+      <div class="stat" tabindex="0" data-tooltip="The number of connection records in the local master connections.csv file, including records marked as disconnected."><span>Connections</span><strong id="stat-csv">0</strong></div>
+      <div class="stat" tabindex="0" data-tooltip="The number of title-classified records in sales-connections.csv from the optional sales and recruitment search."><span>Sales matches</span><strong id="stat-sales">0</strong></div>
+      <div class="stat" tabindex="0" data-tooltip="The number of connections who messaged you in an inbox thread where you never replied."><span>Unrequited</span><strong id="stat-unrequited">0</strong></div>
+      <div class="stat" tabindex="0" data-tooltip="Shows idle when nothing is running, or the name of the active job. Only one job runs at a time."><span>Activity</span><strong id="stat-job">idle</strong></div>
+    </section>
 
-      <section class="card">
-        <h2>Download <a class="card-help" href="/docs/readme.html#dive-download" target="_blank" rel="noopener" data-tooltip="Jump to detailed instructions for downloading your LinkedIn connections.">Explain this</a></h2>
-        <label>Months window (optional) <a class="inline-help" href="/docs/readme.html#dive-months" target="_blank" rel="noopener" data-tooltip="Read how date-window downloads stop once they reach connections older than the selected cutoff.">what’s this?</a>
-          <input id="months" type="number" min="1" placeholder="e.g. 6" data-tooltip="Optional. Enter 6 to fetch connections added in roughly the last six months. Leave blank to continue a full download. Existing older rows are retained unless Fresh is selected.">
-        </label>
-        <label>Limit new contacts
-          <input id="dl-limit" type="number" min="1" placeholder="5000" data-tooltip="Maximum number of previously unseen connections to add during this run. Leave blank for the default limit of 5,000; run again to continue.">
-        </label>
-        <label class="check" data-tooltip="Start from an empty connections.csv and reset pagination state. The rolling backup system saves the current CSV and state first."><input id="fresh" type="checkbox"> Fresh CSV and state</label>
-        <button type="button" id="start-download" class="primary" data-tooltip="Open LinkedIn in the managed Chromium session and begin fetching connections. Progress appears in the Log; interrupted runs can resume.">Start download</button>
-      </section>
+    <div class="journey">
+      <nav class="journey-rail" aria-label="Journey steps">
+        <p class="rail-label">Your progress</p>
+        <ol>
+          <li><a href="#step-setup" data-step-link="setup"><span>01</span><div>Set up login<small>Begin here</small></div></a></li>
+          <li><a href="#step-download" data-step-link="download"><span>02</span><div>Download connections<small>Create your source list</small></div></a></li>
+          <li><a href="#step-insights" data-step-link="insights"><span>03</span><div>Explore insights<small>Optional analysis</small></div></a></li>
+          <li><a href="#step-inbox" data-step-link="inbox"><span>04</span><div>Search inbox<small>Find unanswered messages</small></div></a></li>
+          <li><a href="#step-review" data-step-link="review"><span>05</span><div>Review results<small>Check before action</small></div></a></li>
+          <li><a href="#step-remove" data-step-link="remove"><span>06</span><div>Remove connections<small>Preview, then execute</small></div></a></li>
+        </ol>
+      </nav>
 
-      <section class="card">
-        <h2>Analytics <a class="card-help" href="/docs/readme.html#dive-analytics" target="_blank" rel="noopener" data-tooltip="Jump to the analytics section of the full local guide.">Explain this</a></h2>
-        <p>Builds a private HTML dashboard from connections.csv.</p>
-        <p class="job-hint" id="analytics-status" hidden>Building the dashboard from connections.csv… this can take a minute with a large list.</p>
-        <div class="row">
-          <button type="button" id="start-analytics" class="primary" data-tooltip="Read connections.csv and rebuild the private connections-analytics.html report. When it finishes, the new page opens in your browser. The existing report is backed up first.">Generate dashboard</button>
-          <a id="open-analytics" class="button-link" href="/analytics" target="_blank" rel="noopener" data-tooltip="Open the most recently generated analytics report in a new tab. Generate it first if the report is missing or out of date.">Open dashboard</a>
-        </div>
-      </section>
+      <div class="steps">
+        <section class="step-card" id="step-setup" data-step="setup">
+          <div class="step-marker"><span>01</span></div>
+          <div class="step-content">
+            <div class="step-heading"><div><p class="step-kicker">Start here</p><h2>Set up your login</h2><p class="purpose">Tell the tool which LinkedIn account to use before anything else can begin.</p></div><span class="step-state">Current step</span></div>
+            <div class="privacy-note"><span>◆</span><p><strong>Your password stays private.</strong> Email is saved locally; your password is only passed to the active LinkedIn job.</p></div>
+            <div class="form-grid">
+              <label>LinkedIn email<input id="email" type="email" autocomplete="username" placeholder="you@example.com" data-tooltip="Enter the email address used to sign into LinkedIn. Save writes only this email to the local .env file."></label>
+              <label>Password <span class="hint" id="password-hint">(this run only)</span><input id="password" type="password" autocomplete="current-password" placeholder="••••••••••••" data-tooltip="Used only if LinkedIn needs a fresh login. It is passed directly to the job that needs it and is never written to .env."></label>
+            </div>
+            <label class="check" data-tooltip="Keep this password in your browser's local storage on this machine for 30 days. Untick to erase it immediately."><input id="remember" type="checkbox"> Remember for 30 days on this browser</label>
+            <p class="job-hint" id="remember-status" hidden></p>
+            <div class="action-row"><button type="button" id="save-email" class="primary" data-tooltip="Validate this email and save it as LINKEDIN_EMAIL in the local .env file.">Save &amp; continue <span>→</span></button><a class="card-help" href="/docs/readme.html#dive-setup" target="_blank" rel="noopener">How login works</a></div>
+          </div>
+        </section>
 
-      <section class="card">
-        <h2>Search for unrequited love <a class="card-help" href="/docs/readme.html#dive-inbox" target="_blank" rel="noopener" data-tooltip="Jump to the unrequited-love section of the full local guide.">Explain this</a></h2>
-        <p>Finds connections who messaged you and never got a reply. The CSV keeps every conversation seen so already-read threads are not opened again. Cache the full inbox list once, then later searches only check the latest messages.</p>
-        <p class="job-hint" id="inbox-cache-summary">Conversation cache: 0 · candidates: 0</p>
-        <label>Days back
-          <input id="inbox-days" type="number" min="1" value="30" data-tooltip="Only read connection conversations whose latest activity is within this many days.">
-        </label>
-        <label>Parallel tabs
-          <input id="inbox-tabs" type="number" min="1" value="4" data-tooltip="How many Chromium tabs to use at once when reading threads and resolving profile names. Higher is faster; start with 4.">
-        </label>
-        <label>Limit threads <span class="hint">(optional)</span>
-          <input id="inbox-limit" type="number" min="1" placeholder="all" data-tooltip="Maximum number of conversations to open in this run. Leave blank for every conversation that still needs a read.">
-        </label>
-        <label class="check" data-tooltip="Back up and reset the conversation CSV and scan state before running."><input id="inbox-fresh" type="checkbox"> Fresh CSV and state</label>
-        <p class="job-hint" id="inbox-status" hidden>Reading conversations in LinkedIn Messaging… each thread that still needs a look is opened and scrolled to the top.</p>
-        <div class="row">
-          <button type="button" id="start-inbox-scan" class="primary" data-tooltip="Check the latest messages, then open only conversations that are new, changed, or never read. Nothing is removed.">Search for unrequited love</button>
-          <button type="button" id="start-inbox-cache" data-tooltip="Scroll the whole Connections inbox once and save every conversation to unrequited-love.csv. Does not open threads. Later searches only need the latest messages plus this cache.">Cache conversation list</button>
-          <a id="open-unrequited" class="button-link" href="/unrequited-love.csv" target="_blank" rel="noopener" data-tooltip="Open unrequited-love.csv. Candidate rows are the ones to remove; replied and listed rows are the cache.">Review candidates</a>
-        </div>
-      </section>
+        <section class="step-card" id="step-download" data-step="download">
+          <div class="step-marker"><span>02</span></div>
+          <div class="step-content">
+            <div class="step-heading"><div><p class="step-kicker">Build your foundation</p><h2>Download connections</h2><p class="purpose">Create the local connections.csv that powers every search, insight, and removal.</p></div><span class="step-state">Locked</span></div>
+            <div class="form-grid compact">
+              <label>Months window <span class="hint">(optional)</span><input id="months" type="number" min="1" placeholder="All time" data-tooltip="Enter 6 to fetch roughly the last six months. Leave blank to continue a full download."></label>
+              <label>Limit new contacts<input id="dl-limit" type="number" min="1" placeholder="5,000" data-tooltip="Maximum previously unseen connections to add. Leave blank for 5,000."></label>
+            </div>
+            <label class="check" data-tooltip="Start from an empty connections.csv and reset pagination state. Existing files are backed up first."><input id="fresh" type="checkbox"> Start with a fresh CSV and state</label>
+            <div class="action-row"><button type="button" id="start-download" class="primary" data-tooltip="Open LinkedIn in managed Chromium and begin downloading connections.">Download connections <span>→</span></button><a class="card-help" href="/docs/readme.html#dive-download" target="_blank" rel="noopener">Download guide</a></div>
+          </div>
+        </section>
 
-      <section class="card">
-        <h2>Remove <a class="card-help" href="/docs/readme.html#dive-remove" target="_blank" rel="noopener" data-tooltip="Jump to the safety notes and detailed removal workflow in the local guide.">Explain this</a></h2>
-        <p>Always dry-run first. Execute is a separate action.</p>
-        <label>CSV
-          <select id="csv-source" data-tooltip="Choose the source list. connections.csv is the master download; sales-connections.csv contains contacts classified by the optional title search; unrequited-love.csv holds inbox conversations. Removals from that file only touch candidate rows.">
-            <option value="connections">connections.csv</option>
-            <option value="sales">sales-connections.csv</option>
-            <option value="unrequited">unrequited-love.csv</option>
-          </select>
-        </label>
-        <label>Status
-          <select id="status" data-tooltip="Filter candidates by classification. Spam combines sales, recruitment and sales_and_recruitment; blank includes every row in the selected CSV.">
-            <option value="">(all rows)</option>
-            <option value="spam">spam (sales + recruitment)</option>
-            <option value="sales">sales</option>
-            <option value="recruitment">recruitment</option>
-            <option value="sales_and_recruitment">sales_and_recruitment</option>
-            <option value="not_target">not_target</option>
-          </select>
-        </label>
-        <label>Title keywords <span class="hint">(optional, match any)</span>
-          <textarea id="rm-keywords" rows="2" placeholder="recruiter, sales director, business development" data-tooltip="Enter words or phrases separated by commas or new lines. A connection qualifies when its job title contains any keyword, ignoring case. This combines with the selected Status filter."></textarea>
-        </label>
-        <label>Limit
-          <input id="rm-limit" type="number" min="1" value="20" data-tooltip="Maximum candidates to preview or remove in this run. Start with a small number such as 20 and review the dry run carefully.">
-        </label>
-        <div class="row">
-          <button type="button" id="start-dry" data-tooltip="List exactly which connections match without changing anything on LinkedIn. Always do this before Execute removals.">Dry run</button>
-          <button type="button" id="start-execute" class="danger" data-tooltip="Permanently disconnect the matching people on LinkedIn, up to the selected limit. You must confirm before it starts; completed removals are tracked locally.">Execute removals</button>
-        </div>
-      </section>
+        <section class="step-card" id="step-insights" data-step="insights">
+          <div class="step-marker"><span>03</span></div>
+          <div class="step-content">
+            <div class="step-heading"><div><p class="step-kicker">Optional</p><h2>Explore your network</h2><p class="purpose">Turn connections.csv into a private visual dashboard, and inspect any existing sales classifications.</p></div><span class="step-state">Locked</span></div>
+            <p class="job-hint" id="analytics-status" hidden>Building the dashboard from connections.csv… this can take a minute with a large list.</p>
+            <div class="action-row"><button type="button" id="start-analytics" class="primary" data-tooltip="Rebuild the private connections-analytics.html report and open it.">Generate dashboard</button><a id="open-analytics" class="button-link" href="/analytics" target="_blank" rel="noopener" data-tooltip="Open the most recently generated analytics report.">Open dashboard</a><a class="card-help" href="/docs/readme.html#dive-analytics" target="_blank" rel="noopener">About analytics</a></div>
+          </div>
+        </section>
+
+        <section class="step-card" id="step-inbox" data-step="inbox">
+          <div class="step-marker"><span>04</span></div>
+          <div class="step-content">
+            <div class="step-heading"><div><p class="step-kicker">Discover</p><h2>Search for unrequited love</h2><p class="purpose">Find connections who started a conversation but never received a reply from you.</p></div><span class="step-state">Locked</span></div>
+            <div class="sequence-note"><span>1</span><p><strong>Cache the conversation list first</strong><small>One pass builds a reusable index without opening threads.</small></p><i>→</i><span>2</span><p><strong>Search recent messages</strong><small>Only new or changed conversations need to be read.</small></p></div>
+            <p class="job-hint" id="inbox-cache-summary">Conversation cache: 0 · candidates: 0</p>
+            <div class="form-grid thirds">
+              <label>Days back<input id="inbox-days" type="number" min="1" value="30" data-tooltip="Only read conversations active within this many days."></label>
+              <label>Parallel tabs<input id="inbox-tabs" type="number" min="1" value="4" data-tooltip="How many Chromium tabs to use at once. Start with 4."></label>
+              <label>Thread limit <span class="hint">(optional)</span><input id="inbox-limit" type="number" min="1" placeholder="All" data-tooltip="Maximum conversations to open in this run."></label>
+            </div>
+            <label class="check" data-tooltip="Back up and reset the conversation CSV and scan state before running."><input id="inbox-fresh" type="checkbox"> Start with a fresh CSV and state</label>
+            <p class="job-hint" id="inbox-status" hidden></p>
+            <div class="action-row"><button type="button" id="start-inbox-cache" data-tooltip="Scroll the whole inbox and cache every matching conversation without opening threads.">Cache conversation list</button><button type="button" id="start-inbox-scan" class="primary" data-tooltip="Open only conversations that are new, changed, or unread.">Search messages <span>→</span></button><a class="card-help" href="/docs/readme.html#dive-inbox" target="_blank" rel="noopener">Inbox guide</a></div>
+          </div>
+        </section>
+
+        <section class="step-card" id="step-review" data-step="review">
+          <div class="step-marker"><span>05</span></div>
+          <div class="step-content">
+            <div class="step-heading"><div><p class="step-kicker">Safety check</p><h2>Review your results</h2><p class="purpose">Inspect the generated candidate list before deciding whether anyone should be removed.</p></div><span class="step-state">Locked</span></div>
+            <div class="review-files">
+              <div class="review-file"><div><span class="file-icon">↗</span><p><strong>connections.csv</strong><small>Your complete local connection list</small></p></div><a id="open-connections" class="button-link" href="/connections.csv" target="_blank" rel="noopener">Review file</a></div>
+              <div class="review-file"><div><span class="file-icon">↗</span><p><strong>sales-connections.csv</strong><small>Optional title-classified results</small></p></div><a id="open-sales" class="button-link" href="/sales-connections.csv" target="_blank" rel="noopener">Review file</a></div>
+              <div class="review-file"><div><span class="file-icon">↗</span><p><strong>unrequited-love.csv</strong><small><b id="review-candidate-count">0</b> candidates currently ready to review</small></p></div><a id="open-unrequited" class="button-link" href="/unrequited-love.csv" target="_blank" rel="noopener" data-tooltip="Open unrequited-love.csv. Candidate rows are the ones to remove.">Review candidates</a></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="step-card danger-step" id="step-remove" data-step="remove">
+          <div class="step-marker"><span>06</span></div>
+          <div class="step-content">
+            <div class="step-heading"><div><p class="step-kicker">Final step</p><h2>Remove connections</h2><p class="purpose">Preview the exact list first. Permanent removal remains a separate, confirmed action.</p></div><span class="step-state">Locked</span></div>
+            <div class="safety-banner"><strong>Dry run required first</strong><span>Nothing changes on LinkedIn until you explicitly execute and confirm.</span></div>
+            <div class="form-grid compact">
+              <label>Source CSV<select id="csv-source" data-tooltip="Choose the source list. Unrequited removals only touch candidate rows."><option value="connections">connections.csv</option><option value="sales">sales-connections.csv</option><option value="unrequited">unrequited-love.csv</option></select></label>
+              <label>Status<select id="status" data-tooltip="Filter candidates by classification. Blank includes every row."><option value="">(all rows)</option><option value="spam">spam (sales + recruitment)</option><option value="sales">sales</option><option value="recruitment">recruitment</option><option value="sales_and_recruitment">sales_and_recruitment</option><option value="not_target">not_target</option></select></label>
+              <label class="wide">Title keywords <span class="hint">(optional, match any)</span><textarea id="rm-keywords" rows="2" placeholder="recruiter, sales director, business development" data-tooltip="Enter words or phrases separated by commas or new lines."></textarea></label>
+              <label class="check wide" data-tooltip="When removing from unrequited-love.csv, skip founders, C-suite leaders, investors, board members and other protected titles. This is on by default."><input id="rm-protect-unrequited" type="checkbox" checked> Protect founder / CEO / investor titles</label>
+              <label class="wide">Extra protected title keywords <span class="hint">(optional)</span><textarea id="rm-safe-keywords" rows="2" placeholder="advisor, ambassador" data-tooltip="Add words or phrases to the default unrequited-love safe list, separated by commas or new lines. Matching uses whole words or phrases, ignoring case."></textarea></label>
+              <label>Limit<input id="rm-limit" type="number" min="1" value="20" data-tooltip="Maximum candidates to preview or remove. Start small."></label>
+            </div>
+            <div class="action-row"><button type="button" id="start-dry" data-tooltip="List exactly who matches without changing anything.">Preview dry run</button><button type="button" id="start-execute" class="danger" data-tooltip="Permanently disconnect matching people after confirmation.">Execute removals</button><a class="card-help" href="/docs/readme.html#dive-remove" target="_blank" rel="noopener">Safety guide</a></div>
+          </div>
+        </section>
+      </div>
     </div>
 
     <section class="jobs-card" id="jobs-pane" aria-labelledby="jobs-title">
@@ -143,13 +159,16 @@
       </ol>
     </section>
 
-    <section class="log-card">
+    <details class="log-card">
+      <summary>
+        <span><strong>Technical log</strong><small>Detailed output and troubleshooting</small></span>
+        <span class="summary-chevron">⌄</span>
+      </summary>
       <div class="log-head">
-        <h2>Log</h2>
         <button type="button" id="cancel" class="danger" data-tooltip="Ask the currently running child process to stop. Any CSV and progress already written are retained so supported jobs can resume.">Cancel job</button>
       </div>
       <pre id="log" aria-live="polite" tabindex="0" data-tooltip="Live output from the active job. Scroll here for progress, warnings and errors. This log exists only for the current dashboard server session."></pre>
-    </section>
+    </details>
   </main>
 
   <div id="tooltip" class="tooltip" role="tooltip" hidden></div>

@@ -9,6 +9,7 @@ const {
   findInboxRow,
   needsExamineWithParser,
   isUnrequitedCandidate,
+  markInboxDisconnected,
   applyExamineOutcome,
   listCaughtUp,
 } = require('../lib/inbox-csv');
@@ -50,6 +51,10 @@ upsertListedConversation(rows, {
   activityText: 'Sep 13',
   snippet: 'hi',
   threadId: 't1',
+  connection: {
+    profileUrl: 'https://www.linkedin.com/in/bea/',
+    vanityName: 'bea',
+  },
 });
 assert.strictEqual(rows[0].status, 'listed');
 assert.strictEqual(needsExamineWithParser(rows[0], cutoff, parseActivity), true);
@@ -93,6 +98,26 @@ assert.strictEqual(
   ),
   true
 );
+
+const disconnectedAt = '2026-09-14T15:00:00.000Z';
+assert.strictEqual(
+  markInboxDisconnected(rows, { vanityName: 'bea' }, disconnectedAt),
+  1
+);
+assert.strictEqual(isUnrequitedCandidate(rows[0]), false);
+upsertListedConversation(rows, {
+  name: 'Bea',
+  activityText: 'Sep 15',
+  snippet: 'latest',
+  threadId: 't1',
+});
+assert.strictEqual(rows[0].disconnected, 'yes');
+assert.strictEqual(rows[0].disconnectedOn, disconnectedAt);
+assert.strictEqual(needsExamineWithParser(rows[0], cutoff, parseActivity), false);
+writeInboxCsv(rows, file);
+const disconnectedRoundTrip = loadInboxCsv(file);
+assert.strictEqual(disconnectedRoundTrip[0].disconnected, 'yes');
+assert.strictEqual(disconnectedRoundTrip[0].disconnectedOn, disconnectedAt);
 
 function emptyListed(name, activityText) {
   return {

@@ -14,11 +14,15 @@ const {
 const {
   loadInboxCsv,
   isUnrequitedCandidate,
+  markInboxDisconnected,
+  writeInboxCsv,
 } = require('./lib/inbox-csv');
 const { interpretRemoveResponse, isTrackedRemoved } = require('./lib/remove-response');
 const {
+  DEFAULT_PROTECTED_TITLE_KEYWORDS,
   normalizeKeywords,
   titleMatchesKeywords,
+  titleMatchesProtectedKeywords,
 } = require('./lib/keyword-filter');
 const {
   snapshotAll,
@@ -87,6 +91,8 @@ function parseArgs(argv) {
     masterCsv: MASTER_CSV,
     match: null,
     keywords: [],
+    protectUnrequited: true,
+    safeKeywords: [],
     ignoreCompanies: parseIgnoreCompanies(argv),
   };
 
@@ -127,6 +133,15 @@ function parseArgs(argv) {
     }
     if (arg === '--keywords' && argv[i + 1]) {
       args.keywords = normalizeKeywords(argv[i + 1]);
+      i += 1;
+      continue;
+    }
+    if (arg === '--no-unrequited-safe-list') {
+      args.protectUnrequited = false;
+      continue;
+    }
+    if (arg === '--safe-keywords' && argv[i + 1]) {
+      args.safeKeywords = normalizeKeywords(argv[i + 1]);
       i += 1;
       continue;
     }
@@ -218,12 +233,12 @@ function migrateRemovedFromResults(state) {
   return state;
 }
 
-function recordRemovedConnection(state, target, response) {
+function recordRemovedConnection(state, target, response, at = new Date().toISOString()) {
   state.removed[target.vanityName] = {
     vanityName: target.vanityName,
     name: target.name,
     profileUrl: target.profileUrl,
-    removedAt: new Date().toISOString(),
+    removedAt: at,
     responseStatus: response.status,
   };
   saveRemoveState(state);
@@ -316,6 +331,35 @@ function filterIgnoredCompanies(targets, ignoreCompanies) {
   return { pending, skipped };
 }
 
+function filterProtectedTitles(targets, keywords) {
+  const pending = [];
+  const protectedTargets = [];
+
+  for (const target of targets) {
+    if (titleMatchesProtectedKeywords(target.title, keywords)) {
+      protectedTargets.push(target);
+      continue;
+    }
+    pending.push(target);
+  }
+
+  return { pending, protectedTargets };
+}
+
+function applyUnrequitedSafeList(targets, inboxSource, args) {
+  const keywords = [
+    ...DEFAULT_PROTECTED_TITLE_KEYWORDS,
+    ...(args.safeKeywords || []),
+  ];
+  if (!inboxSource || !args.protectUnrequited) {
+    return { pending: targets, protectedTargets: [], keywords };
+  }
+  return {
+    ...filterProtectedTitles(targets, keywords),
+    keywords,
+  };
+}
+
 function formatTargetLabel(target) {
   const name = target.name || target.vanityName;
   if (target.title) {
@@ -324,7 +368,18 @@ function formatTargetLabel(target) {
   return name;
 }
 
-function loadTargetsFromCsv(csvPath, args) {
+function isInboxCsv(csvPath) {
+  if (!fs.existsSync(csvPath)) {
+    return false;
+  }
+  const firstLine = fs.readFileSync(csvPath, 'utf8').split(/\r?\n/, 1)[0] || '';
+  const header = parseCsvRow(firstLine).map((cell) => cell.trim().toLowerCase());
+  return header.includes('disconnected') &&
+    header.includes('disconnected_on') &&
+    (header.includes('last_activity') || header.includes('thread_id'));
+}
+
+function loadTargetsFromCsv(csvPath, args, inboxRows = null) {
   if (!fs.existsSync(csvPath)) {
     throw new Error(`CSV file not found: ${csvPath}`);
   }
@@ -341,7 +396,7 @@ function loadTargetsFromCsv(csvPath, args) {
   if (masterFormat) {
     let rows =
       header.includes('last_activity') || header.includes('thread_id')
-        ? loadInboxCsv(csvPath).filter(isUnrequitedCandidate)
+        ? (inboxRows || loadInboxCsv(csvPath)).filter(isUnrequitedCandidate)
         : loadConnectionsCsv(csvPath);
     if (args.match) {
       const pattern = new RegExp(args.match, 'i');
@@ -424,6 +479,17 @@ function loadTargetsFromCsv(csvPath, args) {
   }
 
   return deduped;
+}
+
+function persistDisconnectedOnInbox(inboxRows, inboxPath, target, at) {
+  if (!inboxRows) {
+    return 0;
+  }
+  const updated = markInboxDisconnected(inboxRows, target, at);
+  if (updated > 0) {
+    writeInboxCsv(inboxRows, inboxPath);
+  }
+  return updated;
 }
 
 function applyLimit(targets, limit) {
@@ -536,9 +602,11 @@ async function main() {
     `Master CSV: ${prior.updated} newly marked from previous runs, ${prior.inserted} restored rows, ${prior.already} already marked.`
   );
 
-  const allTargets = loadTargetsFromCsv(args.csv, args);
+  const inboxRows = isInboxCsv(args.csv) ? loadInboxCsv(args.csv) : null;
+  const allTargets = loadTargetsFromCsv(args.csv, args, inboxRows);
+  const protectedResult = applyUnrequitedSafeList(allTargets, inboxRows, args);
   const { pending: companyFiltered, skipped: ignoredByCompany } = filterIgnoredCompanies(
-    allTargets,
+    protectedResult.pending,
     args.ignoreCompanies
   );
   const { pending, skipped } = filterAlreadyRemoved(companyFiltered, removeState);
@@ -555,8 +623,26 @@ async function main() {
     );
   }
 
+  if (inboxRows) {
+    console.log(
+      `Unrequited safe list: ${args.protectUnrequited ? 'on' : 'off'}${
+        args.protectUnrequited
+          ? ` (${DEFAULT_PROTECTED_TITLE_KEYWORDS.length} default, ${args.safeKeywords.length} extra)`
+          : ''
+      }.`
+    );
+    console.log(
+      `Protected by safe list: ${protectedResult.protectedTargets.length} connection(s).`
+    );
+  }
+
   if (skipped > 0) {
     console.log(`Skipping ${skipped} already-disconnected connection(s) from previous runs.`);
+  }
+
+  if (!args.execute) {
+    console.log('Dry run mode. Add --execute to actually remove connections.');
+    console.log(`Would remove: ${targets.length} connection(s).`);
   }
 
   if (targets.length === 0) {
@@ -570,7 +656,6 @@ async function main() {
     console.log(`Title keywords (match any): ${args.keywords.join(', ')}`);
   }
   if (!args.execute) {
-    console.log('Dry run mode. Add --execute to actually remove connections.');
     for (const target of targets.slice(0, 20)) {
       console.log(`- ${target.vanityName} (${formatTargetLabel(target)})`);
     }
@@ -616,8 +701,9 @@ async function main() {
           at,
         });
         if (done) {
-          recordRemovedConnection(removeState, target, response);
+          recordRemovedConnection(removeState, target, response, at);
           persistDisconnectedOnMaster(masterRows, args.masterCsv, target, at);
+          persistDisconnectedOnInbox(inboxRows, args.csv, target, at);
           if (interpreted.outcome === 'already_disconnected') {
             alreadyDisconnectedThisRun += 1;
             console.log(`  Already disconnected — marked in CSV, skipping retries.`);
@@ -657,7 +743,18 @@ async function main() {
   console.log(`Master CSV: ${args.masterCsv}`);
 }
 
-main().catch((err) => {
-  console.error(err.stack || err.message);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((err) => {
+    console.error(err.stack || err.message);
+    process.exit(1);
+  });
+}
+
+module.exports = {
+  applyUnrequitedSafeList,
+  filterProtectedTitles,
+  isInboxCsv,
+  loadTargetsFromCsv,
+  parseArgs,
+  persistDisconnectedOnInbox,
+};
