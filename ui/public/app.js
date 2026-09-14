@@ -228,11 +228,17 @@ function setInboxScanRunning(running, kind = 'scan') {
   cacheBtn.classList.toggle('busy', running && kind === 'cache');
   scanBtn.textContent = running && kind === 'scan' ? 'Searching…' : 'Search for unrequited love';
   cacheBtn.textContent =
-    running && kind === 'cache' ? 'Caching…' : 'Cache conversation list';
+    running && kind === 'cache'
+      ? 'Caching…'
+      : latestStatus && latestStatus.inboxCacheResumable
+        ? 'Resume conversation cache'
+        : 'Cache conversation list';
   hint.hidden = !running;
   if (running && kind === 'cache') {
     hint.textContent =
-      'Scrolling the Connections inbox to save every conversation. Threads are not opened.';
+      latestStatus && latestStatus.inboxCacheResumable
+        ? 'Resuming from the last saved inbox page. Use Stop / pause for now to keep progress.'
+        : 'Paging through the inbox list. Use Stop / pause for now to keep progress.';
   } else if (running) {
     hint.textContent =
       'Checking the latest messages, then opening only conversations that still need a read.';
@@ -297,7 +303,9 @@ function showRunningModal(job) {
   body.replaceChildren(jobBodyFragment(job));
   pill.className = 'status-pill running';
   pill.textContent =
-    job.state === 'cancelling' || job.state === 'stopping' ? 'Stopping' : 'Running';
+    job.state === 'pausing' || job.state === 'cancelling' || job.state === 'stopping'
+      ? 'Pausing'
+      : 'Running';
   modal.hidden = false;
   setModalsScrollLock();
 }
@@ -334,6 +342,7 @@ function showResultModal(completed, status) {
   const stack = document.getElementById('success-stack');
   const summary = completed.summary || { rows: [] };
   const failed = completed.outcome === 'failed';
+  const paused = completed.outcome === 'paused' || completed.outcome === 'cancelled';
   const isDownload = completed.name === 'download';
   const isInboxScan = completed.name === 'inbox-scan' || completed.name === 'inbox-cache';
   let rows = [...(summary.rows || [])];
@@ -344,6 +353,10 @@ function showResultModal(completed, status) {
   const label = completed.label || completed.name;
   if (failed) {
     title.textContent = `${label} failed`;
+  } else if (paused && completed.name === 'inbox-cache') {
+    title.textContent = 'Conversation cache paused';
+  } else if (paused) {
+    title.textContent = `${label} paused`;
   } else if (isDownload) {
     title.textContent = 'Download complete';
   } else if (completed.name === 'inbox-cache') {
@@ -354,8 +367,8 @@ function showResultModal(completed, status) {
     title.textContent = `${label} complete`;
   }
   detail.textContent = completed.detail || '';
-  pill.className = `status-pill ${failed ? 'failed' : 'succeeded'}`;
-  pill.textContent = failed ? 'Failed' : 'Succeeded';
+  pill.className = `status-pill ${failed ? 'failed' : paused ? 'paused' : 'succeeded'}`;
+  pill.textContent = failed ? 'Failed' : paused ? 'Paused' : 'Succeeded';
 
   const trace = Array.isArray(completed.errorStack) ? completed.errorStack : [];
   if (failed && trace.length) {
@@ -427,8 +440,8 @@ function renderJobs(status) {
     );
     summaryEl.className = 'status-pill running';
     summaryEl.textContent =
-      job.state === 'cancelling' || job.state === 'stopping'
-        ? 'Stopping'
+      job.state === 'pausing' || job.state === 'cancelling' || job.state === 'stopping'
+        ? 'Pausing'
         : 'Running';
     showRunningModal(job);
   } else {
@@ -614,7 +627,11 @@ function renderStatus(status) {
     const cached = Number(status.conversationCount ?? 0);
     const candidates = Number(status.unrequitedCount ?? 0);
     cacheSummary.textContent = `Conversation cache: ${cached.toLocaleString()} · candidates: ${candidates.toLocaleString()}${
-      status.inboxCacheComplete ? ' · list complete' : ''
+      status.inboxCacheComplete
+        ? ' · list complete'
+        : status.inboxCacheResumable
+          ? ' · resume available'
+          : ''
     }`;
   }
   document.getElementById('stat-job').textContent = status.job ? status.job.name : 'idle';

@@ -90,11 +90,15 @@ function broadcast(event) {
 function inboxCsvStats() {
   const rows = loadInboxCsv(UNREQUITED_CSV);
   let cacheComplete = false;
+  let inboxCacheResumable = false;
   const statePath = path.join(ROOT, 'inbox-scan-state.json');
   if (fs.existsSync(statePath)) {
     try {
       const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
       cacheComplete = Boolean(state && state.cacheComplete);
+      inboxCacheResumable = Boolean(
+        state && (state.listCursor || rows.length) && !state.cacheComplete
+      );
     } catch (err) {
       console.error(err.stack || err.message);
     }
@@ -103,6 +107,7 @@ function inboxCsvStats() {
     conversationCount: rows.length,
     unrequitedCount: rows.filter(isUnrequitedCandidate).length,
     inboxCacheComplete: cacheComplete,
+    inboxCacheResumable,
   };
 }
 
@@ -204,6 +209,7 @@ function summariseJobOutput(job) {
       log,
       /Skipped ([0-9,]+) conversation\(s\) not in connections\.csv and ([0-9,]+) group thread\(s\)/i
     );
+    const paused = pickLog(log, /Pause requested|Paused — conversation cache saved/i);
     const cacheListed = pickLog(log, /Listed this run:\s+([0-9,]+)/i);
     const cacheSize = pickLog(log, /Conversation cache:\s+([0-9,]+)/i);
     const scanned = pickLog(log, /Scanned this run:\s+([0-9,]+)/i);
@@ -242,6 +248,12 @@ function summariseJobOutput(job) {
     if (output) summary.rows.push({ label: 'Output file', value: output[1].trim() });
     const oldest = pickLog(log, /Oldest conversation:\s+(.+)/i);
     if (oldest) summary.rows.push({ label: 'Oldest conversation', value: oldest[1].trim() });
+    if (paused) {
+      summary.rows.push({
+        label: 'Paused',
+        value: 'Progress saved — run cache again to resume older pages',
+      });
+    }
     if (caught) {
       summary.rows.push({ label: 'List', value: 'Stopped at the saved conversation cache' });
     } else {
@@ -317,9 +329,9 @@ function stopJob(signal = 'SIGTERM') {
   if (!currentJob || !currentJob.child) {
     return false;
   }
-  currentJob.state = signal === 'SIGKILL' ? 'stopping' : 'cancelling';
+  currentJob.state = signal === 'SIGKILL' ? 'stopping' : 'pausing';
   currentJob.statusLine =
-    signal === 'SIGKILL' ? 'Force-stopping process…' : 'Cancellation requested…';
+    signal === 'SIGKILL' ? 'Force-stopping process…' : 'Pause requested — saving progress…';
   broadcast({ type: 'job', job: jobSnapshot() });
   currentJob.child.kill(signal);
   return true;
@@ -327,7 +339,7 @@ function stopJob(signal = 'SIGTERM') {
 
 function startJob({ name, label, detail, args, password }) {
   if (currentJob) {
-    const err = new Error('A job is already running. Cancel it first.');
+    const err = new Error('A job is already running. Pause it first.');
     err.statusCode = 409;
     throw err;
   }
@@ -378,8 +390,8 @@ function startJob({ name, label, detail, args, password }) {
 
   child.on('close', (code, signal) => {
     const endedAt = new Date().toISOString();
-    const cancelled = job.state === 'cancelling' || job.state === 'stopping';
-    const outcome = cancelled ? 'cancelled' : code === 0 ? 'succeeded' : 'failed';
+    const paused = job.state === 'pausing' || job.state === 'cancelling' || job.state === 'stopping';
+    const outcome = paused ? 'paused' : code === 0 ? 'succeeded' : 'failed';
     const completed = {
       id: job.id,
       name: job.name,
@@ -633,13 +645,13 @@ app.post('/api/jobs/cancel', (_req, res) => {
     res.status(409).json({ error: 'No job is running.' });
     return;
   }
-  appendLog('Cancel requested…');
+  appendLog('Pause requested…');
   stopJob('SIGTERM');
   setTimeout(() => {
     if (currentJob) {
       stopJob('SIGKILL');
     }
-  }, 2500);
+  }, 15000);
   res.json({ ok: true });
 });
 

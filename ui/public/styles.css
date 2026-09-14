@@ -150,6 +150,7 @@ button.busy::before { content: ""; position: absolute; left: 14px; width: 11px; 
 .status-pill { flex: 0 0 auto; padding: 5px 10px; color: var(--muted); border: 1px solid var(--border); border-radius: 999px; text-transform: uppercase; letter-spacing: .06em; font-size: .62rem; font-weight: 700; }
 .status-pill.running { color: var(--accent); border-color: rgba(75,181,247,.35); }
 .status-pill.succeeded { color: var(--green); border-color: rgba(98,215,162,.35); }
+.status-pill.paused { color: #fbbf24; border-color: rgba(251,191,36,.35); }
 .status-pill.failed, .status-pill.cancelled { color: var(--danger); border-color: rgba(255,112,123,.35); }
 .current-job { margin: 16px 0; min-height: 40px; }
 .job-name { font-weight: 600; }

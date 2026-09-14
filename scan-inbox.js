@@ -9,6 +9,12 @@ const {
 } = require('./lib/linkedin-auth');
 const { cutoffForDays, parseThreadDate } = require('./lib/inbox-thread-date');
 const { loadConnectionsCsv } = require('./lib/connections-csv');
+const {
+  cursorFromOldestCached,
+  discoverMessagingListApi,
+  fetchConversationPage,
+  parseConversationElements,
+} = require('./lib/inbox-list-api');
 const { buildConnectionIndex, matchConnection } = require('./lib/connection-index');
 const {
   applyExamineOutcome,
@@ -29,7 +35,7 @@ const MESSAGING_URL = 'https://www.linkedin.com/messaging/';
 const OUTPUT_FILE = path.join(__dirname, 'unrequited-love.csv');
 const CONNECTIONS_FILE = path.join(__dirname, 'connections.csv');
 const STATE_FILE = path.join(__dirname, 'inbox-scan-state.json');
-const STATE_VERSION = 2;
+const STATE_VERSION = 3;
 const DEFAULT_DAYS = 30;
 const DEFAULT_TABS = 4;
 const MAX_LIST_ROUNDS = 1500;
@@ -40,6 +46,8 @@ const CACHE_PERSIST_EVERY = 25;
 const LIST_RECOVERY_LIMIT = 3;
 const THREAD_PAUSE_MS = 1500;
 let activeBrowser = null;
+let pauseRequested = false;
+let persistPause = () => {};
 const PROFILE_PAUSE_MS = 2500;
 
 function parseArgs(argv) {
@@ -89,6 +97,9 @@ function emptyState(days) {
     scanned: {},
     cacheComplete: false,
     cacheCompletedAt: '',
+    listQueryId: '',
+    mailboxUrn: '',
+    listCursor: '',
     updatedAt: new Date().toISOString(),
   };
 }
@@ -110,6 +121,9 @@ function loadState(days) {
       candidates: state.candidates || {},
       cacheComplete: Boolean(state.cacheComplete),
       cacheCompletedAt: state.cacheCompletedAt || '',
+      listQueryId: state.listQueryId || '',
+      mailboxUrn: state.mailboxUrn || '',
+      listCursor: state.listCursor || '',
     };
   } catch (err) {
     console.error(err.stack || err.message);
@@ -295,6 +309,110 @@ function oldestActivityLabel(entries) {
   return label;
 }
 
+function classifyListedEntry(entry, connectionIndex, skipped) {
+  const { match, ambiguous, reason } = matchConnection(connectionIndex, entry.name);
+  if (reason === 'group') {
+    skipped.group += 1;
+    return null;
+  }
+  if (reason !== 'connection') {
+    skipped.notConnected += 1;
+    return null;
+  }
+  return { ...entry, connection: ambiguous ? null : match };
+}
+
+async function collectConversationsFromApi(
+  page,
+  { session, startCursor, connectionIndex, onProgress, onCursor }
+) {
+  const collected = new Map();
+  const skipped = { group: 0, notConnected: 0 };
+  let listed = 0;
+  let cursor = startCursor || '';
+  let stopReason = 'reached the end of the inbox';
+  let pageNumber = startCursor ? 1 : 0;
+
+  while (!pauseRequested) {
+    let result;
+    try {
+      result = await fetchConversationPage(page, {
+        queryId: session.queryId,
+        mailboxUrn: session.mailboxUrn,
+        nextCursor: cursor,
+      });
+    } catch (err) {
+      console.error(err.stack || err.message);
+      if (pauseRequested) {
+        stopReason = 'paused by user';
+        break;
+      }
+      throw err;
+    }
+    if (!result.ok) {
+      throw new Error(
+        `Messaging list request failed (${result.status}): ${JSON.stringify(result.body).slice(0, 240)}`
+      );
+    }
+    const parsed = parseConversationElements(result.body);
+    pageNumber += 1;
+    const before = collected.size;
+    for (const entry of parsed.conversations) {
+      if (!entry.name) {
+        continue;
+      }
+      listed += 1;
+      const classified = classifyListedEntry(entry, connectionIndex, skipped);
+      if (!classified) {
+        continue;
+      }
+      const key = classified.threadId || classified.key;
+      if (!collected.has(key) || (!collected.get(key).threadId && classified.threadId)) {
+        collected.set(key, classified);
+      }
+    }
+    if (parsed.nextCursor) {
+      onCursor?.(parsed.nextCursor, session);
+    }
+    if (collected.size > before) {
+      const label = oldestActivityLabel(collected.values());
+      console.log(
+        `Listing… ${collected.size} connection conversation(s) of ${listed} listed${
+          label ? `, back to ${label}` : ''
+        }`
+      );
+      onProgress?.([...collected.values()]);
+    }
+    if (!parsed.nextCursor) {
+      stopReason = 'reached the end of the inbox';
+      break;
+    }
+    if (parsed.nextCursor === cursor) {
+      stopReason = 'reached the end of the inbox';
+      break;
+    }
+    cursor = parsed.nextCursor;
+    await sleep(400);
+  }
+
+  if (pauseRequested) {
+    stopReason = 'paused by user';
+  }
+
+  return {
+    inWindow: [...collected.values()],
+    total: collected.size,
+    listed,
+    skipped,
+    undated: 0,
+    caughtUp: false,
+    stopReason,
+    oldest: oldestActivityLabel(collected.values()),
+    listCursor: cursor,
+    pages: pageNumber,
+  };
+}
+
 async function collectConversations(
   page,
   { cutoff, fullList, cacheComplete, cacheRows, connectionIndex, onProgress }
@@ -406,6 +524,11 @@ async function collectConversations(
     }
     if (!fullList && reachedCutoff) {
       stopReason = 'reached the date window cutoff';
+      break;
+    }
+
+    if (pauseRequested) {
+      stopReason = 'paused by user';
       break;
     }
 
@@ -773,7 +896,11 @@ async function main() {
     await page.waitForSelector('li.msg-conversation-listitem', { timeout: 30000 });
 
     if (args.cache) {
-      console.log('Caching the full conversation list…');
+      if (state.listCursor) {
+        console.log('Resuming the conversation cache from the last saved page…');
+      } else {
+        console.log('Caching the full conversation list…');
+      }
       state.cacheComplete = false;
       state.cacheCompletedAt = '';
       saveState(state);
@@ -786,25 +913,59 @@ async function main() {
     }
 
     let persistedAt = rows.length;
-    const { inWindow, total, listed, skipped, undated, caughtUp, stopReason, oldest } =
-      await collectConversations(page, {
+    persistPause = () => {
+      persistCsv(rows, args.csv);
+      saveState(state);
+    };
+
+    let listResult;
+    if (args.cache) {
+      let session = {
+        queryId: state.listQueryId,
+        mailboxUrn: state.mailboxUrn,
+      };
+      if (!session.queryId || !session.mailboxUrn) {
+        session = await discoverMessagingListApi(page);
+      }
+      state.listQueryId = session.queryId;
+      state.mailboxUrn = session.mailboxUrn;
+      const startCursor =
+        state.listCursor || cursorFromOldestCached(rows, parseThreadDate);
+      if (startCursor && !state.listCursor) {
+        console.log('No saved GraphQL cursor; continuing from the oldest cached thread.');
+      }
+      listResult = await collectConversationsFromApi(page, {
+        session,
+        startCursor,
+        connectionIndex,
+        onProgress: (entries) => {
+          for (const entry of entries) {
+            upsertListedConversation(rows, entry);
+          }
+          if (rows.length - persistedAt >= CACHE_PERSIST_EVERY) {
+            persistCsv(rows, args.csv);
+            persistedAt = rows.length;
+          }
+        },
+        onCursor: (cursor, apiSession) => {
+          state.listCursor = cursor;
+          state.listQueryId = apiSession.queryId;
+          state.mailboxUrn = apiSession.mailboxUrn;
+          saveState(state);
+        },
+      });
+    } else {
+      listResult = await collectConversations(page, {
         cutoff,
-        fullList: args.cache,
+        fullList: false,
         cacheComplete: state.cacheComplete,
         cacheRows: rows,
         connectionIndex,
-        onProgress: args.cache
-          ? (entries) => {
-              for (const entry of entries) {
-                upsertListedConversation(rows, entry);
-              }
-              if (rows.length - persistedAt >= CACHE_PERSIST_EVERY) {
-                persistCsv(rows, args.csv);
-                persistedAt = rows.length;
-              }
-            }
-          : null,
+        onProgress: null,
       });
+    }
+    const { inWindow, total, listed, skipped, undated, caughtUp, stopReason, oldest } =
+      listResult;
     if (skipped.notConnected || skipped.group) {
       console.log(
         `Skipped ${skipped.notConnected} conversation(s) not in connections.csv and ${skipped.group} group thread(s).`
@@ -826,14 +987,18 @@ async function main() {
     persistCsv(rows, args.csv);
 
     if (args.cache) {
-      // Only a list that ran out of conversations is a complete cache; a reload
-      // or the round limit means there is more history still to walk.
-      const reachedEnd = /no new conversations/.test(stopReason);
-      state.cacheComplete = reachedEnd;
-      state.cacheCompletedAt = reachedEnd ? new Date().toISOString() : '';
+      // Only a list that ran out of conversations is a complete cache.
+      const reachedEnd = /reached the end of the inbox/.test(stopReason);
+      state.cacheComplete = reachedEnd && !pauseRequested;
+      state.cacheCompletedAt = state.cacheComplete ? new Date().toISOString() : '';
+      if (listResult.listCursor) {
+        state.listCursor = listResult.listCursor;
+      }
       saveState(state);
-      if (!reachedEnd) {
-        console.log('Cache is partial — run it again to continue from the newest messages.');
+      if (pauseRequested) {
+        console.log('Paused — conversation cache saved. Run cache again to resume older pages.');
+      } else if (!reachedEnd) {
+        console.log('Cache is partial — run it again to continue from the last saved page.');
       }
       console.log('');
       console.log(`Threads listed:      ${listed}`);
@@ -982,16 +1147,28 @@ async function closeActiveBrowser() {
   }
 }
 
-// A cancelled run must not leave Chrome holding the session profile — the next
-// run cannot reuse it while another instance is open.
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, () => {
-    console.log(`\nReceived ${signal} — closing the LinkedIn browser…`);
-    closeActiveBrowser().finally(() => process.exit(1));
+    if (pauseRequested) {
+      return;
+    }
+    pauseRequested = true;
+    console.log(`\nPause requested (${signal}) — saving progress…`);
+    try {
+      persistPause();
+    } catch (err) {
+      console.error(err.stack || err.message);
+    }
   });
 }
 
-main().catch((err) => {
-  console.error(err.stack || err.message);
-  process.exitCode = 1;
-});
+main()
+  .then(() => {
+    if (pauseRequested) {
+      process.exitCode = 0;
+    }
+  })
+  .catch((err) => {
+    console.error(err.stack || err.message);
+    process.exitCode = 1;
+  });

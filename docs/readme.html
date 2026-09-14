@@ -213,7 +213,7 @@ npm run scrape:sales:fresh</pre>
             <h3>6. Search for unrequited love</h3>
             <p>Opens LinkedIn Messaging and lists every conversation, matching each name against <code>connections.csv</code> to decide who is a connection, then reads the matched threads whose latest activity falls inside <code>--days</code> (default 30). LinkedIn’s own <strong>Connections</strong> inbox filter is not used: it stops serving results after roughly 100 threads, so it hides most of your history. Download your connections before searching, and group threads are skipped. Threads are opened in parallel Chromium tabs (default 4) and scrolled to the top. A conversation is stored in <code>unrequited-love.csv</code> the first time it is seen. Later runs skip threads whose last activity has not changed.</p>
             <p>A connection becomes a candidate only when they sent at least one message and you sent <strong>none</strong> in that thread. Candidate rows are the ones the Remove card uses; replied and listed rows stay in the same CSV as the cache. Nothing is removed by the search itself. Successful removals are immediately marked <code>disconnected=yes</code> with a timestamp in this CSV, so later searches and removal runs skip them without losing the conversation history.</p>
-            <p>Use <strong>Cache conversation list</strong> (<code>--cache</code>) once to scroll the whole inbox and save every connection conversation without opening threads. After that, a search only loads the latest messages until it catches up with the cache, then decides from the CSV which threads still need a read.</p>
+            <p>Use <strong>Cache conversation list</strong> once to page through the inbox via LinkedIn’s conversation list API and save every connection conversation without opening threads. <strong>Stop / pause for now</strong> keeps the CSV and the list cursor. Run cache again to resume older pages instead of starting over. After the list is complete, a search only loads the latest messages until it catches up with the cache, then decides from the CSV which threads still need a read.</p>
             <div class="code-block">
               <button type="button" class="copy-btn" aria-label="Copy code">Copy</button>
               <pre>npm run inbox:cache
@@ -231,7 +231,7 @@ npm run inbox:scan -- --fresh</pre>
                 <tr><td><code>--days</code></td><td>How far back to look, by last activity (default 30)</td></tr>
                 <tr><td><code>--limit</code></td><td>Max conversations to open this run</td></tr>
                 <tr><td><code>--tabs</code></td><td>Parallel Chromium tabs for reading threads (default 4)</td></tr>
-                <tr><td><code>--cache</code></td><td>Scroll the whole conversation list into the CSV without opening threads</td></tr>
+                <tr><td><code>--cache</code></td><td>Page the conversation list into the CSV without opening threads. Re-running resumes from the last saved page</td></tr>
                 <tr><td><code>--csv</code></td><td>Output path (default <code>unrequited-love.csv</code>)</td></tr>
                 <tr><td><code>--fresh</code></td><td>Back up, then reset the CSV and scan state</td></tr>
                 <tr><td><code>--status</code></td><td>Print scanned, found and ready-to-remove counts</td></tr>
