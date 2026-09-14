@@ -32,6 +32,12 @@ const {
   snapshotAll,
   writeProtectedFile,
 } = require('./lib/rolling-backup');
+const {
+  SCAN_BROWSER_RESTART_LIMIT,
+  describeThreadOpenFailure,
+  isLostContext,
+  unreadAfterLostContext,
+} = require('./lib/inbox-scan-recovery');
 
 const MESSAGING_URL = 'https://www.linkedin.com/messaging/';
 const OUTPUT_FILE = path.join(__dirname, 'unrequited-love.csv');
@@ -48,6 +54,7 @@ const CACHE_PERSIST_EVERY = 25;
 const LIST_RECOVERY_LIMIT = 3;
 const BROWSER_CLOSE_TIMEOUT_MS = 8000;
 const BROWSER_KILL_GRACE_MS = 5000;
+const BROWSER_RESTART_PAUSE_MS = 2000;
 const THREAD_PAUSE_MS = 1500;
 let activeBrowser = null;
 let pauseRequested = false;
@@ -289,12 +296,6 @@ async function scrollConversationList(page) {
 
     return { moved: pane.scrollTop > before, count: items.length, busy };
   });
-}
-
-function isLostContext(err) {
-  return /Execution context was destroyed|Target closed|detached Frame|Session closed|Navigating frame/i.test(
-    String(err && err.message)
-  );
 }
 
 function oldestActivityLabel(entries) {
@@ -608,7 +609,9 @@ async function collectConversations(
 
 async function openConversation(page, entry) {
   const previousUrl = page.url();
-  const clicked = await page.evaluate((key) => {
+  let clicked;
+  try {
+    clicked = await page.evaluate((key) => {
     const clean = (value) => String(value || '').replace(/\s+/g, ' ').trim();
     const item = [...document.querySelectorAll('li.msg-conversation-listitem')].find(
       (candidate) => {
@@ -632,6 +635,10 @@ async function openConversation(page, entry) {
     link.click();
     return true;
   }, entry.key);
+  } catch (err) {
+    console.error(err.stack || err.message);
+    return describeThreadOpenFailure(err, '');
+  }
 
   if (!clicked) {
     return { opened: false, reason: 'conversation no longer in the list' };
@@ -646,7 +653,7 @@ async function openConversation(page, entry) {
     );
   } catch (err) {
     console.error(err.stack || err.message);
-    return { opened: false, reason: 'conversation did not open' };
+    return describeThreadOpenFailure(err, '');
   }
 
   const threadId =
@@ -656,7 +663,7 @@ async function openConversation(page, entry) {
     await page.waitForSelector('.msg-s-event-listitem', { timeout: 15000 });
   } catch (err) {
     console.error(err.stack || err.message);
-    return { opened: false, reason: 'no message history in this conversation', threadId };
+    return describeThreadOpenFailure(err, threadId);
   }
 
   return { opened: true, threadId };
@@ -679,17 +686,20 @@ async function openThreadById(page, threadId) {
     return { opened: true, threadId };
   } catch (err) {
     console.error(err.stack || err.message);
-    return { opened: false, reason: 'conversation did not open', threadId };
+    return describeThreadOpenFailure(err, threadId);
   }
 }
 
-async function runPool(items, concurrency, workerFn) {
+async function runPool(items, concurrency, workerFn, shouldStop = () => pauseRequested) {
   let next = 0;
   const width = Math.max(1, Math.min(concurrency, items.length));
   await Promise.all(
     Array.from({ length: width }, (_, workerIndex) =>
       (async () => {
         while (true) {
+          if (shouldStop()) {
+            return;
+          }
           const index = next;
           next += 1;
           if (index >= items.length) {
@@ -708,6 +718,130 @@ async function openWorkerPages(browser, count) {
     pages.push(await browser.newPage());
   }
   return pages;
+}
+
+async function relaunchMessagingSession(tabCount) {
+  await closeActiveBrowser();
+  await sleep(BROWSER_RESTART_PAUSE_MS);
+  const browser = await launchLinkedInBrowser();
+  activeBrowser = browser;
+  const page = await browser.newPage();
+  await ensureLoggedIn(page, MESSAGING_URL);
+  await page.waitForSelector('main', { timeout: 30000 });
+  const selfName = await readSelfName(page);
+  console.log(`Signed in as ${selfName}`);
+  const workers = tabCount > 0 ? await openWorkerPages(browser, tabCount) : [];
+  return { browser, page, selfName, workers };
+}
+
+async function examineQueuedThreads(toScan, { tabs, selfName, csvPath, rows }) {
+  let remaining = toScan.filter(unreadAfterLostContext);
+  let restarts = 0;
+  let workers = await openWorkerPages(activeBrowser, tabs);
+  let currentSelfName = selfName;
+  let found = 0;
+
+  while (remaining.length && !pauseRequested) {
+    console.log(`Opened ${workers.length} scan tab(s).`);
+    let lostError = null;
+    const shouldStop = () => pauseRequested || Boolean(lostError);
+
+    await runPool(
+      remaining,
+      workers.length,
+      async (entry, _batchIndex, workerIndex) => {
+        if (shouldStop()) {
+          return;
+        }
+        const label = `[${entry.scanIndex}/${toScan.length}] ${entry.name} (${entry.activityText})`;
+        const worker = workers[workerIndex];
+        const row = entry.row;
+        try {
+          const opened = await openThreadById(worker, entry.threadId);
+          if (!opened.opened) {
+            if (opened.lostContext) {
+              lostError = opened.error || new Error(opened.reason);
+              return;
+            }
+            console.log(`${label} — skipped: ${opened.reason}`);
+            applyExamineOutcome(
+              row,
+              { status: 'skipped' },
+              {
+                activityText: entry.activityText,
+                threadId: opened.threadId || entry.threadId,
+              }
+            );
+          } else {
+            await scrollWholeThread(worker);
+            const result = await classifyThread(worker, currentSelfName);
+            const vanityName = vanityFromUrl(result.profileUrl);
+            let outcome;
+
+            if (!vanityName) {
+              console.log(`${label} — skipped: no member profile link`);
+              outcome = { status: 'skipped', reason: 'no profile link' };
+            } else if (result.conflicts > 0) {
+              console.log(
+                `${label} — skipped: ${result.conflicts} message(s) with an unclear sender`
+              );
+              outcome = { status: 'skipped', reason: 'unclear sender' };
+            } else if (result.inbound > 0 && result.outbound === 0) {
+              found += 1;
+              outcome = { status: 'candidate' };
+              console.log(
+                `${label} — candidate: ${result.inbound} message(s) in, no reply`
+              );
+            } else {
+              console.log(
+                `${label} — keeping: ${result.inbound} in, ${result.outbound} out`
+              );
+              outcome = { status: 'replied' };
+            }
+            applyExamineOutcome(row, outcome, {
+              title: result.title,
+              profileUrl: result.profileUrl,
+              vanityName,
+              inbound: result.inbound,
+              outbound: result.outbound,
+              activityText: entry.activityText,
+              threadId: opened.threadId,
+            });
+          }
+        } catch (err) {
+          console.error(err.stack || err.message);
+          if (isLostContext(err)) {
+            lostError = err;
+            return;
+          }
+          applyExamineOutcome(row, { status: 'error' }, { activityText: entry.activityText });
+        }
+
+        persistCsv(rows, csvPath);
+        await sleep(THREAD_PAUSE_MS);
+      },
+      shouldStop
+    );
+
+    remaining = remaining.filter(unreadAfterLostContext);
+    if (!lostError || pauseRequested || !remaining.length) {
+      break;
+    }
+    restarts += 1;
+    if (restarts > SCAN_BROWSER_RESTART_LIMIT) {
+      throw new Error(
+        `The LinkedIn browser closed ${SCAN_BROWSER_RESTART_LIMIT} time(s) during the search. ${remaining.length} conversation(s) were left unread so a later run can retry them.`
+      );
+    }
+    console.log(
+      `Browser session closed. Restarting (${restarts}/${SCAN_BROWSER_RESTART_LIMIT}) with ${remaining.length} conversation(s) still to read…`
+    );
+    const session = await relaunchMessagingSession(tabs);
+    workers = session.workers;
+    currentSelfName = session.selfName;
+  }
+
+  return { found, workers };
 }
 
 async function scrollWholeThread(page) {
@@ -920,12 +1054,12 @@ async function main() {
   try {
     browser = await launchLinkedInBrowser();
     activeBrowser = browser;
-    const page = await browser.newPage();
+    let page = await browser.newPage();
     const listWatch = watchMessagingListApi(page);
     await ensureLoggedIn(page, MESSAGING_URL);
     await page.waitForSelector('main', { timeout: 30000 });
 
-    const selfName = await readSelfName(page);
+    let selfName = await readSelfName(page);
     console.log(`Signed in as ${selfName}`);
 
     await page.waitForSelector('li.msg-conversation-listitem', { timeout: 30000 });
@@ -1059,6 +1193,7 @@ async function main() {
     );
 
     const toScan = [];
+    let listPageRestarts = 0;
     for (const row of selected) {
       const entry = {
         key: `${row.name}|${row.lastActivity}|${row.snippet || ''}`,
@@ -1072,85 +1207,58 @@ async function main() {
         toScan.push(entry);
         continue;
       }
-      const opened = await openConversation(page, entry);
-      if (!opened.opened) {
+      while (!pauseRequested) {
+        const opened = await openConversation(page, entry);
+        if (opened.opened) {
+          row.threadId = opened.threadId;
+          persistCsv(rows, args.csv);
+          toScan.push({ ...entry, threadId: opened.threadId });
+          break;
+        }
+        if (opened.lostContext) {
+          listPageRestarts += 1;
+          if (listPageRestarts > SCAN_BROWSER_RESTART_LIMIT) {
+            throw new Error(
+              `The LinkedIn browser closed ${SCAN_BROWSER_RESTART_LIMIT} time(s) before conversations could be opened.`
+            );
+          }
+          console.log(
+            `Browser session closed while opening ${entry.name}. Restarting (${listPageRestarts}/${SCAN_BROWSER_RESTART_LIMIT})…`
+          );
+          const session = await relaunchMessagingSession(0);
+          page = session.page;
+          selfName = session.selfName;
+          continue;
+        }
         console.log(`${entry.name} (${entry.activityText}) — skipped: ${opened.reason}`);
         applyExamineOutcome(row, { status: 'skipped' }, { activityText: entry.activityText });
         persistCsv(rows, args.csv);
-        continue;
+        break;
       }
-      row.threadId = opened.threadId;
-      persistCsv(rows, args.csv);
-      toScan.push({ ...entry, threadId: opened.threadId });
     }
 
-    const workers = await openWorkerPages(browser, args.tabs);
-    console.log(`Opened ${workers.length} scan tab(s).`);
+    toScan.forEach((entry, index) => {
+      entry.scanIndex = index + 1;
+    });
 
     let found = 0;
+    let workers = [];
     if (toScan.length) {
-      await runPool(toScan, workers.length, async (entry, index, workerIndex) => {
-        const label = `[${index + 1}/${toScan.length}] ${entry.name} (${entry.activityText})`;
-        const worker = workers[workerIndex];
-        const row = entry.row;
-
-        try {
-          const opened = await openThreadById(worker, entry.threadId);
-          if (!opened.opened) {
-            console.log(`${label} — skipped: ${opened.reason}`);
-            applyExamineOutcome(row, { status: 'skipped' }, {
-              activityText: entry.activityText,
-              threadId: opened.threadId || entry.threadId,
-            });
-          } else {
-            await scrollWholeThread(worker);
-            const result = await classifyThread(worker, selfName);
-            const vanityName = vanityFromUrl(result.profileUrl);
-            let outcome;
-
-            if (!vanityName) {
-              console.log(`${label} — skipped: no member profile link`);
-              outcome = { status: 'skipped', reason: 'no profile link' };
-            } else if (result.conflicts > 0) {
-              console.log(
-                `${label} — skipped: ${result.conflicts} message(s) with an unclear sender`
-              );
-              outcome = { status: 'skipped', reason: 'unclear sender' };
-            } else if (result.inbound > 0 && result.outbound === 0) {
-              found += 1;
-              outcome = { status: 'candidate' };
-              console.log(
-                `${label} — candidate: ${result.inbound} message(s) in, no reply`
-              );
-            } else {
-              console.log(
-                `${label} — keeping: ${result.inbound} in, ${result.outbound} out`
-              );
-              outcome = { status: 'replied' };
-            }
-            applyExamineOutcome(row, outcome, {
-              title: result.title,
-              profileUrl: result.profileUrl,
-              vanityName,
-              inbound: result.inbound,
-              outbound: result.outbound,
-              activityText: entry.activityText,
-              threadId: opened.threadId,
-            });
-          }
-        } catch (err) {
-          console.error(err.stack || err.message);
-          applyExamineOutcome(row, { status: 'error' }, { activityText: entry.activityText });
-        }
-
-        persistCsv(rows, args.csv);
-        await sleep(THREAD_PAUSE_MS);
+      const examined = await examineQueuedThreads(toScan, {
+        tabs: args.tabs,
+        selfName,
+        csvPath: args.csv,
+        rows,
       });
+      found = examined.found;
+      workers = examined.workers;
     }
 
     let written = 0;
     try {
-      await resolveVanityNames(workers.length ? workers : [page], rows, args.csv);
+      if (!pauseRequested && workers.length) {
+        await resolveVanityNames(workers, rows, args.csv);
+      }
     } finally {
       written = persistCsv(rows, args.csv);
     }
