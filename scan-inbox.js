@@ -14,6 +14,7 @@ const {
   discoverMessagingListApi,
   fetchConversationPage,
   parseConversationElements,
+  watchMessagingListApi,
 } = require('./lib/inbox-list-api');
 const { buildConnectionIndex, matchConnection } = require('./lib/connection-index');
 const {
@@ -340,6 +341,8 @@ async function collectConversationsFromApi(
   let pageNumber = 0;
   let staleCursor = false;
 
+  let recoveries = 0;
+
   while (!pauseRequested) {
     let result;
     try {
@@ -354,7 +357,14 @@ async function collectConversationsFromApi(
         stopReason = 'paused by user';
         break;
       }
-      throw err;
+      if (!isLostContext(err) || recoveries >= LIST_RECOVERY_LIMIT) {
+        throw err;
+      }
+      recoveries += 1;
+      console.log(`Messaging page reloaded (${recoveries}/${LIST_RECOVERY_LIMIT}); continuing the list…`);
+      await page.goto(MESSAGING_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await sleep(1500);
+      continue;
     }
     if (!result.ok) {
       throw new Error(
@@ -903,6 +913,7 @@ async function main() {
     browser = await launchLinkedInBrowser();
     activeBrowser = browser;
     const page = await browser.newPage();
+    const listWatch = watchMessagingListApi(page);
     await ensureLoggedIn(page, MESSAGING_URL);
     await page.waitForSelector('main', { timeout: 30000 });
 
@@ -938,7 +949,7 @@ async function main() {
     if (args.cache) {
       // The queryId is a LinkedIn build hash, so read it from the live page
       // rather than trusting the one saved by an earlier run.
-      const session = await discoverMessagingListApi(page);
+      const session = await discoverMessagingListApi(page, listWatch);
       state.listQueryId = session.queryId;
       state.mailboxUrn = session.mailboxUrn;
       const startCursor = state.listCursor || cursorFromOldestCached(rows);

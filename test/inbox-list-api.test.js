@@ -3,9 +3,12 @@ const {
   buildListUrl,
   cursorFromOldestCached,
   decodeListCursor,
+  discoverMessagingListApi,
   encodeListCursor,
   parseConversationElements,
+  parseMailboxUrnFromUrl,
   parseMessagingListUrl,
+  watchMessagingListApi,
 } = require('../lib/inbox-list-api');
 
 const cursor = encodeListCursor(1673568000000, '2-abc');
@@ -106,6 +109,13 @@ assert.strictEqual(
   null
 );
 
+assert.strictEqual(
+  parseMailboxUrnFromUrl(
+    'https://www.linkedin.com/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerConversations.0d5e&variables=(mailboxUrn:urn%3Ali%3Afsd_profile%3AACoAAATest)'
+  ),
+  'urn:li:fsd_profile:ACoAAATest'
+);
+
 const fromCsv = cursorFromOldestCached([
   { threadId: '2-newer', lastActivity: 'Jan 12, 2023', lastActivityMs: '1673481600000' },
   { threadId: '2-older', lastActivity: 'Mar 1, 2022', lastActivityMs: '1646092800000' },
@@ -121,4 +131,45 @@ assert.strictEqual(
   ''
 );
 
-console.log('inbox-list-api tests passed');
+const LIST_URL =
+  'https://www.linkedin.com/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerConversations.abc&variables=(query:(predicateUnions:List((conversationCategoryPredicate:(category:PRIMARY_INBOX)))),count:20,mailboxUrn:urn%3Ali%3Afsd_profile%3AACoAAATest)';
+
+function createFakePage(resourceUrls = []) {
+  const handlers = new Map();
+  return {
+    evaluate: async () => resourceUrls,
+    on(event, fn) {
+      handlers.set(event, fn);
+    },
+    off(event, fn) {
+      if (handlers.get(event) === fn) {
+        handlers.delete(event);
+      }
+    },
+    emitRequest(url) {
+      handlers.get('request')?.({ url: () => url });
+    },
+  };
+}
+
+(async () => {
+  const watched = createFakePage();
+  const watch = watchMessagingListApi(watched);
+  watched.emitRequest(LIST_URL);
+  const fromWatch = await discoverMessagingListApi(watched, watch);
+  assert.strictEqual(fromWatch.mailboxUrn, 'urn:li:fsd_profile:ACoAAATest');
+  assert.ok(fromWatch.queryId.includes('messengerConversations'));
+
+  const raced = createFakePage();
+  raced.evaluate = async () => {
+    raced.emitRequest(LIST_URL);
+    return [];
+  };
+  const fromRace = await discoverMessagingListApi(raced);
+  assert.strictEqual(fromRace.mailboxUrn, 'urn:li:fsd_profile:ACoAAATest');
+
+  console.log('inbox-list-api tests passed');
+})().catch((err) => {
+  console.error(err.stack || err.message);
+  process.exit(1);
+});
