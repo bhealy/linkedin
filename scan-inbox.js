@@ -8,7 +8,15 @@ const {
   sleep,
 } = require('./lib/linkedin-auth');
 const { cutoffForDays, parseThreadDate } = require('./lib/inbox-thread-date');
-const { escapeCsv } = require('./lib/connections-csv');
+const {
+  applyExamineOutcome,
+  isUnrequitedCandidate,
+  loadInboxCsv,
+  listCaughtUp,
+  needsExamineWithParser,
+  upsertListedConversation,
+  writeInboxCsv,
+} = require('./lib/inbox-csv');
 const {
   removeProtectedFile,
   snapshotAll,
@@ -18,30 +26,19 @@ const {
 const MESSAGING_URL = 'https://www.linkedin.com/messaging/';
 const OUTPUT_FILE = path.join(__dirname, 'unrequited-love.csv');
 const STATE_FILE = path.join(__dirname, 'inbox-scan-state.json');
-const STATE_VERSION = 1;
+const STATE_VERSION = 2;
 const DEFAULT_DAYS = 30;
 const DEFAULT_TABS = 4;
 const THREAD_PAUSE_MS = 1500;
 let activeBrowser = null;
 const PROFILE_PAUSE_MS = 2500;
-const CSV_FIELDS = [
-  'name',
-  'title',
-  'profile_url',
-  'vanity_name',
-  'connected_on',
-  'disconnected',
-  'disconnected_on',
-  'last_activity',
-  'inbound_count',
-  'scanned_at',
-];
 
 function parseArgs(argv) {
   const args = {
     days: DEFAULT_DAYS,
     limit: null,
     tabs: DEFAULT_TABS,
+    cache: false,
     fresh: false,
     status: false,
     csv: OUTPUT_FILE,
@@ -50,6 +47,8 @@ function parseArgs(argv) {
     const arg = argv[i];
     if (arg === '--fresh') {
       args.fresh = true;
+    } else if (arg === '--cache') {
+      args.cache = true;
     } else if (arg === '--status') {
       args.status = true;
     } else if (arg === '--days' && argv[i + 1]) {
@@ -79,7 +78,8 @@ function emptyState(days) {
     version: STATE_VERSION,
     days,
     scanned: {},
-    candidates: {},
+    cacheComplete: false,
+    cacheCompletedAt: '',
     updatedAt: new Date().toISOString(),
   };
 }
@@ -99,6 +99,8 @@ function loadState(days) {
       days,
       scanned: state.scanned || {},
       candidates: state.candidates || {},
+      cacheComplete: Boolean(state.cacheComplete),
+      cacheCompletedAt: state.cacheCompletedAt || '',
     };
   } catch (err) {
     console.error(err.stack || err.message);
@@ -128,31 +130,62 @@ function isObfuscatedVanity(vanityName) {
   return /^ACoAA/i.test(String(vanityName || ''));
 }
 
-function writeCandidatesCsv(state, filePath) {
-  const rows = Object.values(state.candidates || {}).filter(
-    (candidate) => candidate.vanityName && !isObfuscatedVanity(candidate.vanityName)
-  );
-  const lines = [
-    CSV_FIELDS.join(','),
-    ...rows.map((row) =>
-      [
-        row.name || '',
-        row.title || '',
-        row.profileUrl || '',
-        row.vanityName,
-        '',
-        '',
-        '',
-        row.activityText || '',
-        String(row.inbound ?? ''),
-        row.scannedAt || '',
-      ]
-        .map(escapeCsv)
-        .join(',')
-    ),
-  ];
-  writeProtectedFile(filePath, `${lines.join('\n')}\n`);
-  return rows.length;
+function persistCsv(rows, filePath) {
+  writeInboxCsv(rows, filePath);
+  return rows.filter(
+    (row) =>
+      isUnrequitedCandidate(row) &&
+      row.vanityName &&
+      !isObfuscatedVanity(row.vanityName)
+  ).length;
+}
+
+function hydrateRowsFromState(rows, state) {
+  for (const [key, scanned] of Object.entries(state.scanned || {})) {
+    const [name, activityText, snippet] = String(key).split('|');
+    const entry = {
+      name,
+      activityText,
+      snippet: snippet || '',
+      threadId: scanned.threadId || '',
+    };
+    const { row } = upsertListedConversation(rows, entry);
+    if (scanned.status && scanned.status !== 'listed') {
+      applyExamineOutcome(
+        row,
+        { status: scanned.status === 'candidate' ? 'candidate' : scanned.status },
+        {
+          inbound: scanned.inbound,
+          outbound: scanned.outbound,
+          activityText,
+          threadId: scanned.threadId,
+          scannedAt: scanned.scannedAt,
+        }
+      );
+    }
+  }
+  for (const [threadId, candidate] of Object.entries(state.candidates || {})) {
+    const entry = {
+      name: candidate.name,
+      activityText: candidate.activityText,
+      snippet: '',
+      threadId,
+    };
+    const { row } = upsertListedConversation(rows, entry);
+    applyExamineOutcome(
+      row,
+      { status: 'candidate' },
+      {
+        title: candidate.title,
+        profileUrl: candidate.profileUrl,
+        vanityName: candidate.vanityName,
+        inbound: candidate.inbound,
+        activityText: candidate.activityText,
+        threadId,
+        scannedAt: candidate.scannedAt,
+      }
+    );
+  }
 }
 
 const CONNECTIONS_FILTER_STATE = () => {
@@ -241,12 +274,14 @@ async function scrollConversationList(page) {
   });
 }
 
-async function collectConversations(page, cutoff) {
+async function collectConversations(page, { cutoff, fullList, cacheComplete, cacheRows }) {
   const collected = new Map();
   let stableRounds = 0;
   let reachedCutoff = false;
+  let caughtUp = false;
+  const maxRounds = fullList ? 400 : 200;
 
-  for (let round = 0; round < 200 && stableRounds < 4 && !reachedCutoff; round += 1) {
+  for (let round = 0; round < maxRounds && stableRounds < 4; round += 1) {
     const batch = await readConversationList(page);
     const before = collected.size;
     for (const entry of batch) {
@@ -258,12 +293,22 @@ async function collectConversations(page, cutoff) {
         collected.set(entry.key, entry);
       }
       const activity = parseThreadDate(entry.activityText);
-      if (activity && activity.getTime() < cutoff.getTime()) {
+      if (!fullList && activity && activity.getTime() < cutoff.getTime()) {
         reachedCutoff = true;
       }
     }
     stableRounds = collected.size === before ? stableRounds + 1 : 0;
-    if (reachedCutoff) {
+    if (
+      !fullList &&
+      cacheComplete &&
+      cacheRows &&
+      cacheRows.length &&
+      listCaughtUp(batch, cacheRows)
+    ) {
+      caughtUp = true;
+      break;
+    }
+    if (!fullList && reachedCutoff) {
       break;
     }
     await scrollConversationList(page);
@@ -273,6 +318,10 @@ async function collectConversations(page, cutoff) {
   const inWindow = [];
   let undated = 0;
   for (const entry of collected.values()) {
+    if (fullList) {
+      inWindow.push(entry);
+      continue;
+    }
     const activity = parseThreadDate(entry.activityText);
     if (!activity) {
       undated += 1;
@@ -282,7 +331,7 @@ async function collectConversations(page, cutoff) {
       inWindow.push(entry);
     }
   }
-  return { inWindow, total: collected.size, undated };
+  return { inWindow, total: collected.size, undated, caughtUp };
 }
 
 async function openConversation(page, entry) {
@@ -491,10 +540,12 @@ async function readSelfName(page) {
   return name;
 }
 
-async function resolveVanityNames(pages, state) {
-  const pending = Object.entries(state.candidates || {}).filter(
-    ([, candidate]) =>
-      !candidate.vanityName || isObfuscatedVanity(candidate.vanityName)
+async function resolveVanityNames(pages, rows, csvPath) {
+  const pending = rows.filter(
+    (row) =>
+      isUnrequitedCandidate(row) &&
+      (!row.vanityName || isObfuscatedVanity(row.vanityName)) &&
+      row.profileUrl
   );
   if (!pending.length) {
     return 0;
@@ -510,30 +561,24 @@ async function resolveVanityNames(pages, state) {
   );
   let resolved = 0;
 
-  await runPool(pending, workers.length, async ([threadId, candidate], _index, workerIndex) => {
-    if (!candidate.profileUrl) {
-      return;
-    }
+  await runPool(pending, workers.length, async (row, _index, workerIndex) => {
     const page = workers[workerIndex];
     try {
-      await page.goto(candidate.profileUrl, {
+      await page.goto(row.profileUrl, {
         waitUntil: 'domcontentloaded',
         timeout: 60000,
       });
       await sleep(PROFILE_PAUSE_MS);
       const vanityName = vanityFromUrl(page.url());
       if (!vanityName || isObfuscatedVanity(vanityName)) {
-        console.log(`  ${candidate.name}: could not resolve a profile name`);
+        console.log(`  ${row.name}: could not resolve a profile name`);
         return;
       }
-      state.candidates[threadId] = {
-        ...state.candidates[threadId],
-        vanityName,
-        profileUrl: `https://www.linkedin.com/in/${vanityName}/`,
-      };
-      saveState(state);
+      row.vanityName = vanityName;
+      row.profileUrl = `https://www.linkedin.com/in/${vanityName}/`;
+      persistCsv(rows, csvPath);
       resolved += 1;
-      console.log(`  ${candidate.name} → ${vanityName}`);
+      console.log(`  ${row.name} → ${vanityName}`);
     } catch (err) {
       console.error(err.stack || err.message);
     }
@@ -542,20 +587,26 @@ async function resolveVanityNames(pages, state) {
   return resolved;
 }
 
-function countUnresolvedCandidates(state) {
-  return Object.values(state.candidates || {}).filter(
-    (candidate) => !candidate.vanityName || isObfuscatedVanity(candidate.vanityName)
+function countUnresolvedCandidates(rows) {
+  return rows.filter(
+    (row) =>
+      isUnrequitedCandidate(row) &&
+      (!row.vanityName || isObfuscatedVanity(row.vanityName))
   ).length;
 }
 
-function printStatus(state, csvPath) {
-  const scanned = Object.keys(state.scanned || {}).length;
-  const candidates = Object.values(state.candidates || {});
-  const unresolved = countUnresolvedCandidates(state);
-  console.log(`Scanned conversations: ${scanned}`);
-  console.log(`Candidates found:      ${candidates.length}`);
+function printStatus(rows, csvPath, state) {
+  const candidates = rows.filter(isUnrequitedCandidate);
+  const unresolved = countUnresolvedCandidates(rows);
+  const examined = rows.filter(
+    (row) => row.status && row.status !== 'listed'
+  ).length;
+  console.log(`Conversation cache:    ${rows.length}`);
+  console.log(`Threads examined:      ${examined}`);
+  console.log(`Unrequited candidates: ${candidates.length}`);
   console.log(`Ready to remove:       ${candidates.length - unresolved}`);
   console.log(`Awaiting profile name: ${unresolved}`);
+  console.log(`List cache complete:   ${state.cacheComplete ? 'yes' : 'no'}`);
   console.log(`Output file:           ${csvPath}`);
 }
 
@@ -563,7 +614,10 @@ async function main() {
   const args = parseArgs(process.argv);
 
   if (args.status) {
-    printStatus(loadState(args.days), args.csv);
+    const statusRows = loadInboxCsv(args.csv);
+    const statusState = loadState(args.days);
+    hydrateRowsFromState(statusRows, statusState);
+    printStatus(statusRows, args.csv, statusState);
     return;
   }
 
@@ -574,6 +628,8 @@ async function main() {
   }
 
   const state = loadState(args.days);
+  const rows = loadInboxCsv(args.csv);
+  hydrateRowsFromState(rows, state);
   const cutoff = cutoffForDays(args.days);
   let browser;
 
@@ -591,20 +647,63 @@ async function main() {
     await selectConnectionsFilter(page);
     await page.waitForSelector('li.msg-conversation-listitem', { timeout: 30000 });
 
-    console.log(`Loading conversations active in the last ${args.days} day(s)…`);
-    const { inWindow, total, undated } = await collectConversations(page, cutoff);
+    if (args.cache) {
+      console.log('Caching the full conversation list…');
+    } else if (state.cacheComplete) {
+      console.log(
+        `Loading latest messages (cache has ${rows.length} conversation(s))…`
+      );
+    } else {
+      console.log(`Loading conversations active in the last ${args.days} day(s)…`);
+    }
+
+    const { inWindow, total, undated, caughtUp } = await collectConversations(page, {
+      cutoff,
+      fullList: args.cache,
+      cacheComplete: state.cacheComplete,
+      cacheRows: rows,
+    });
     if (undated) {
       console.log(`Skipped ${undated} conversation(s) with an unreadable date.`);
     }
+    if (caughtUp) {
+      console.log('Caught up with the saved conversation cache.');
+    }
 
-    const pending = inWindow.filter((entry) => !state.scanned[entry.key]);
+    for (const entry of inWindow) {
+      upsertListedConversation(rows, entry);
+    }
+    persistCsv(rows, args.csv);
+
+    if (args.cache) {
+      state.cacheComplete = true;
+      state.cacheCompletedAt = new Date().toISOString();
+      saveState(state);
+      console.log('');
+      console.log(`Listed this run:     ${inWindow.length}`);
+      console.log(`Conversation cache:  ${rows.length}`);
+      console.log(`Output file:         ${args.csv}`);
+      return;
+    }
+
+    const pending = rows.filter((row) =>
+      needsExamineWithParser(row, cutoff, parseThreadDate)
+    );
     const selected = args.limit ? pending.slice(0, args.limit) : pending;
     console.log(
-      `Listed ${total} conversation(s); ${inWindow.length} in window, ${pending.length} unscanned, scanning ${selected.length} with ${args.tabs} tab(s).`
+      `Listed ${total} conversation(s); ${inWindow.length} in the latest window, ${pending.length} need a thread read, reading ${selected.length} with ${args.tabs} tab(s).`
     );
 
     const toScan = [];
-    for (const entry of selected) {
+    for (const row of selected) {
+      const entry = {
+        key: `${row.name}|${row.lastActivity}|${row.snippet || ''}`,
+        name: row.name,
+        activityText: row.lastActivity,
+        snippet: row.snippet || '',
+        threadId: row.threadId,
+        row,
+      };
       if (entry.threadId) {
         toScan.push(entry);
         continue;
@@ -612,16 +711,12 @@ async function main() {
       const opened = await openConversation(page, entry);
       if (!opened.opened) {
         console.log(`${entry.name} (${entry.activityText}) — skipped: ${opened.reason}`);
-        state.scanned[entry.key] = {
-          status: 'skipped',
-          reason: opened.reason,
-          name: entry.name,
-          activityText: entry.activityText,
-          scannedAt: new Date().toISOString(),
-        };
-        saveState(state);
+        applyExamineOutcome(row, { status: 'skipped' }, { activityText: entry.activityText });
+        persistCsv(rows, args.csv);
         continue;
       }
+      row.threadId = opened.threadId;
+      persistCsv(rows, args.csv);
       toScan.push({ ...entry, threadId: opened.threadId });
     }
 
@@ -633,17 +728,21 @@ async function main() {
       await runPool(toScan, workers.length, async (entry, index, workerIndex) => {
         const label = `[${index + 1}/${toScan.length}] ${entry.name} (${entry.activityText})`;
         const worker = workers[workerIndex];
-        let outcome;
+        const row = entry.row;
 
         try {
           const opened = await openThreadById(worker, entry.threadId);
           if (!opened.opened) {
             console.log(`${label} — skipped: ${opened.reason}`);
-            outcome = { status: 'skipped', reason: opened.reason };
+            applyExamineOutcome(row, { status: 'skipped' }, {
+              activityText: entry.activityText,
+              threadId: opened.threadId || entry.threadId,
+            });
           } else {
             await scrollWholeThread(worker);
             const result = await classifyThread(worker, selfName);
             const vanityName = vanityFromUrl(result.profileUrl);
+            let outcome;
 
             if (!vanityName) {
               console.log(`${label} — skipped: no member profile link`);
@@ -655,64 +754,51 @@ async function main() {
               outcome = { status: 'skipped', reason: 'unclear sender' };
             } else if (result.inbound > 0 && result.outbound === 0) {
               found += 1;
-              state.candidates[opened.threadId] = {
-                name: entry.name,
-                title: result.title,
-                profileUrl: result.profileUrl,
-                vanityName,
-                activityText: entry.activityText,
-                inbound: result.inbound,
-                scannedAt: new Date().toISOString(),
-              };
+              outcome = { status: 'candidate' };
               console.log(
                 `${label} — candidate: ${result.inbound} message(s) in, no reply`
               );
-              outcome = { status: 'candidate', threadId: opened.threadId };
             } else {
               console.log(
                 `${label} — keeping: ${result.inbound} in, ${result.outbound} out`
               );
               outcome = { status: 'replied' };
             }
-            outcome = {
-              ...outcome,
+            applyExamineOutcome(row, outcome, {
+              title: result.title,
+              profileUrl: result.profileUrl,
+              vanityName,
               inbound: result.inbound,
               outbound: result.outbound,
-              messages: result.events,
-            };
+              activityText: entry.activityText,
+              threadId: opened.threadId,
+            });
           }
         } catch (err) {
           console.error(err.stack || err.message);
-          outcome = { status: 'error', reason: err.message };
+          applyExamineOutcome(row, { status: 'error' }, { activityText: entry.activityText });
         }
 
-        state.scanned[entry.key] = {
-          ...outcome,
-          name: entry.name,
-          activityText: entry.activityText,
-          scannedAt: new Date().toISOString(),
-        };
-        saveState(state);
+        persistCsv(rows, args.csv);
         await sleep(THREAD_PAUSE_MS);
       });
     }
 
-    // A candidate only reaches the CSV once its profile name is resolved, so
-    // always write what we have even if resolving some of them fails.
     let written = 0;
     try {
-      await resolveVanityNames(workers.length ? workers : [page], state);
+      await resolveVanityNames(workers.length ? workers : [page], rows, args.csv);
     } finally {
-      written = writeCandidatesCsv(state, args.csv);
+      written = persistCsv(rows, args.csv);
     }
 
-    const unresolved = countUnresolvedCandidates(state);
+    const unresolved = countUnresolvedCandidates(rows);
     console.log('');
     console.log(`Scanned this run:  ${selected.length}`);
     console.log(`New candidates:    ${found}`);
-    console.log(`Rows in CSV:       ${written}`);
+    console.log(`Rows in CSV:       ${rows.length}`);
+    console.log(`Ready to remove:   ${written}`);
     if (unresolved) {
-      console.log(`Awaiting profile name: ${unresolved} — run the scan again to finish them`);
+      console.log(`Awaiting profile name: ${unresolved} — run the search again to finish them`);
     }
     console.log(`Output file:       ${args.csv}`);
     console.log('');

@@ -11,6 +11,10 @@ const {
   isDisconnected,
   markDisconnected,
 } = require('./lib/connections-csv');
+const {
+  loadInboxCsv,
+  isUnrequitedCandidate,
+} = require('./lib/inbox-csv');
 const { interpretRemoveResponse, isTrackedRemoved } = require('./lib/remove-response');
 const {
   normalizeKeywords,
@@ -335,7 +339,10 @@ function loadTargetsFromCsv(csvPath, args) {
   const masterFormat = header.includes('vanity_name') || header.includes('connected_on');
 
   if (masterFormat) {
-    let rows = loadConnectionsCsv(csvPath);
+    let rows =
+      header.includes('last_activity') || header.includes('thread_id')
+        ? loadInboxCsv(csvPath).filter(isUnrequitedCandidate)
+        : loadConnectionsCsv(csvPath);
     if (args.match) {
       const pattern = new RegExp(args.match, 'i');
       rows = rows.filter((row) => pattern.test(row.title || ''));

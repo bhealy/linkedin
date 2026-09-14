@@ -220,12 +220,23 @@ function setAnalyticsRunning(running) {
   hint.hidden = !running;
 }
 
-function setInboxScanRunning(running) {
-  const btn = document.getElementById('start-inbox-scan');
+function setInboxScanRunning(running, kind = 'scan') {
+  const scanBtn = document.getElementById('start-inbox-scan');
+  const cacheBtn = document.getElementById('start-inbox-cache');
   const hint = document.getElementById('inbox-status');
-  btn.classList.toggle('busy', running);
-  btn.textContent = running ? 'Scanning…' : 'Scan inbox';
+  scanBtn.classList.toggle('busy', running && kind === 'scan');
+  cacheBtn.classList.toggle('busy', running && kind === 'cache');
+  scanBtn.textContent = running && kind === 'scan' ? 'Searching…' : 'Search for unrequited love';
+  cacheBtn.textContent =
+    running && kind === 'cache' ? 'Caching…' : 'Cache conversation list';
   hint.hidden = !running;
+  if (running && kind === 'cache') {
+    hint.textContent =
+      'Scrolling the Connections inbox to save every conversation. Threads are not opened.';
+  } else if (running) {
+    hint.textContent =
+      'Checking the latest messages, then opening only conversations that still need a read.';
+  }
 }
 
 function formatDuration(ms) {
@@ -324,7 +335,7 @@ function showResultModal(completed, status) {
   const summary = completed.summary || { rows: [] };
   const failed = completed.outcome === 'failed';
   const isDownload = completed.name === 'download';
-  const isInboxScan = completed.name === 'inbox-scan';
+  const isInboxScan = completed.name === 'inbox-scan' || completed.name === 'inbox-cache';
   let rows = [...(summary.rows || [])];
   if (isDownload && !failed && rows.length === 0) {
     rows = parseDownloadSummaryFromLog(logEl.textContent || '');
@@ -335,8 +346,10 @@ function showResultModal(completed, status) {
     title.textContent = `${label} failed`;
   } else if (isDownload) {
     title.textContent = 'Download complete';
+  } else if (completed.name === 'inbox-cache') {
+    title.textContent = 'Conversation cache complete';
   } else if (isInboxScan) {
-    title.textContent = 'Inbox scan complete';
+    title.textContent = 'Unrequited love search complete';
   } else {
     title.textContent = `${label} complete`;
   }
@@ -471,21 +484,32 @@ function renderStatus(status) {
   document.getElementById('stat-unrequited').textContent = String(
     status.unrequitedCount ?? 0
   );
+  const cacheSummary = document.getElementById('inbox-cache-summary');
+  if (cacheSummary) {
+    const cached = Number(status.conversationCount ?? 0);
+    const candidates = Number(status.unrequitedCount ?? 0);
+    cacheSummary.textContent = `Conversation cache: ${cached.toLocaleString()} · candidates: ${candidates.toLocaleString()}${
+      status.inboxCacheComplete ? ' · list complete' : ''
+    }`;
+  }
   document.getElementById('stat-job').textContent = status.job ? status.job.name : 'idle';
   if (status.email && !emailEl.value) {
     emailEl.value = status.email;
   }
   const busy = Boolean(status.job);
   const analyticsRunning = Boolean(status.job && status.job.name === 'analytics');
-  const inboxRunning = Boolean(status.job && status.job.name === 'inbox-scan');
+  const inboxRunning = Boolean(
+    status.job && (status.job.name === 'inbox-scan' || status.job.name === 'inbox-cache')
+  );
   document.getElementById('start-download').disabled = busy;
   document.getElementById('start-inbox-scan').disabled = busy;
+  document.getElementById('start-inbox-cache').disabled = busy;
   document.getElementById('start-analytics').disabled = busy;
   document.getElementById('start-dry').disabled = busy;
   document.getElementById('start-execute').disabled = busy;
   document.getElementById('cancel').disabled = !busy;
   setAnalyticsRunning(analyticsRunning);
-  setInboxScanRunning(inboxRunning);
+  setInboxScanRunning(inboxRunning, status.job && status.job.name === 'inbox-cache' ? 'cache' : 'scan');
   renderJobs(status);
 }
 
@@ -534,8 +558,9 @@ document.getElementById('start-download').addEventListener('click', async () => 
 });
 
 document.getElementById('start-inbox-scan').addEventListener('click', async () => {
-  setInboxScanRunning(true);
+  setInboxScanRunning(true, 'scan');
   document.getElementById('start-inbox-scan').disabled = true;
+  document.getElementById('start-inbox-cache').disabled = true;
   scrollJobsIntoView();
   try {
     await postJson('/api/jobs/inbox-scan', {
@@ -543,6 +568,23 @@ document.getElementById('start-inbox-scan').addEventListener('click', async () =
       days: document.getElementById('inbox-days').value,
       tabs: document.getElementById('inbox-tabs').value,
       limit: document.getElementById('inbox-limit').value,
+      fresh: document.getElementById('inbox-fresh').checked,
+    });
+  } catch (err) {
+    setInboxScanRunning(false);
+    appendLog(err.stack || err.message);
+    await refreshStatus();
+  }
+});
+
+document.getElementById('start-inbox-cache').addEventListener('click', async () => {
+  setInboxScanRunning(true, 'cache');
+  document.getElementById('start-inbox-scan').disabled = true;
+  document.getElementById('start-inbox-cache').disabled = true;
+  scrollJobsIntoView();
+  try {
+    await postJson('/api/jobs/inbox-cache', {
+      password: password(),
       fresh: document.getElementById('inbox-fresh').checked,
     });
   } catch (err) {

@@ -23,7 +23,7 @@
   </header>
 
   <main>
-    <p class="lead">Drive download, analytics, inbox scans, and removals from this page. LinkedIn login still opens in Puppeteer’s Chromium window when needed. Your password is sent only with the job that needs it and is never written to <code>.env</code>; it is kept in this browser only if you tick “Remember for 30 days”.</p>
+    <p class="lead">Drive download, analytics, unrequited-love search, and removals from this page. LinkedIn login still opens in Puppeteer’s Chromium window when needed. Your password is sent only with the job that needs it and is never written to <code>.env</code>; it is kept in this browser only if you tick “Remember for 30 days”.</p>
 
     <p class="lead">New here? The <a href="/docs/index.html#wizard" target="_blank" rel="noopener" data-tooltip="Open the guided eight-step introduction in a new tab. It is served locally and works offline.">step-by-step wizard</a> walks through every stage in order, and the <a href="/docs/readme.html" target="_blank" rel="noopener" data-tooltip="Open the full local reference in a new tab, with both a short summary and detailed instructions.">full guide</a> has an executive summary plus a deeper dive on how each part works. Both are served from this machine, so they work offline.</p>
 
@@ -72,22 +72,24 @@
       </section>
 
       <section class="card">
-        <h2>Inbox scan <a class="card-help" href="/docs/readme.html#dive-inbox" target="_blank" rel="noopener" data-tooltip="Jump to the inbox scan section of the full local guide.">Explain this</a></h2>
-        <p>Finds connections who messaged you and never got a reply, and writes them to unrequited-love.csv for the Remove card.</p>
+        <h2>Search for unrequited love <a class="card-help" href="/docs/readme.html#dive-inbox" target="_blank" rel="noopener" data-tooltip="Jump to the unrequited-love section of the full local guide.">Explain this</a></h2>
+        <p>Finds connections who messaged you and never got a reply. The CSV keeps every conversation seen so already-read threads are not opened again. Cache the full inbox list once, then later searches only check the latest messages.</p>
+        <p class="job-hint" id="inbox-cache-summary">Conversation cache: 0 · candidates: 0</p>
         <label>Days back
-          <input id="inbox-days" type="number" min="1" value="30" data-tooltip="Only scan connection conversations whose latest activity is within this many days.">
+          <input id="inbox-days" type="number" min="1" value="30" data-tooltip="Only read connection conversations whose latest activity is within this many days.">
         </label>
         <label>Parallel tabs
           <input id="inbox-tabs" type="number" min="1" value="4" data-tooltip="How many Chromium tabs to use at once when reading threads and resolving profile names. Higher is faster; start with 4.">
         </label>
         <label>Limit threads <span class="hint">(optional)</span>
-          <input id="inbox-limit" type="number" min="1" placeholder="all" data-tooltip="Maximum number of unscanned conversations to open in this run. Leave blank for every conversation in the date window.">
+          <input id="inbox-limit" type="number" min="1" placeholder="all" data-tooltip="Maximum number of conversations to open in this run. Leave blank for every conversation that still needs a read.">
         </label>
-        <label class="check" data-tooltip="Back up and reset inbox scan state and unrequited-love.csv before scanning."><input id="inbox-fresh" type="checkbox"> Fresh CSV and state</label>
-        <p class="job-hint" id="inbox-status" hidden>Reading conversations in LinkedIn Messaging… each thread is opened and scrolled to the top, so this takes a while.</p>
+        <label class="check" data-tooltip="Back up and reset the conversation CSV and scan state before running."><input id="inbox-fresh" type="checkbox"> Fresh CSV and state</label>
+        <p class="job-hint" id="inbox-status" hidden>Reading conversations in LinkedIn Messaging… each thread that still needs a look is opened and scrolled to the top.</p>
         <div class="row">
-          <button type="button" id="start-inbox-scan" class="primary" data-tooltip="Open LinkedIn Messaging, apply the Connections filter, load every conversation in the date window, and read each full thread. Nothing is removed by this scan.">Scan inbox</button>
-          <a id="open-unrequited" class="button-link" href="/unrequited-love.csv" target="_blank" rel="noopener" data-tooltip="Open unrequited-love.csv in a new tab to review the candidates before you remove anyone. Run a scan first if it is empty.">Review candidates</a>
+          <button type="button" id="start-inbox-scan" class="primary" data-tooltip="Check the latest messages, then open only conversations that are new, changed, or never read. Nothing is removed.">Search for unrequited love</button>
+          <button type="button" id="start-inbox-cache" data-tooltip="Scroll the whole Connections inbox once and save every conversation to unrequited-love.csv. Does not open threads. Later searches only need the latest messages plus this cache.">Cache conversation list</button>
+          <a id="open-unrequited" class="button-link" href="/unrequited-love.csv" target="_blank" rel="noopener" data-tooltip="Open unrequited-love.csv. Candidate rows are the ones to remove; replied and listed rows are the cache.">Review candidates</a>
         </div>
       </section>
 
@@ -95,7 +97,7 @@
         <h2>Remove <a class="card-help" href="/docs/readme.html#dive-remove" target="_blank" rel="noopener" data-tooltip="Jump to the safety notes and detailed removal workflow in the local guide.">Explain this</a></h2>
         <p>Always dry-run first. Execute is a separate action.</p>
         <label>CSV
-          <select id="csv-source" data-tooltip="Choose the source list. connections.csv is the master download; sales-connections.csv contains contacts classified by the optional title search; unrequited-love.csv holds the connections found by the inbox scan who never got a reply.">
+          <select id="csv-source" data-tooltip="Choose the source list. connections.csv is the master download; sales-connections.csv contains contacts classified by the optional title search; unrequited-love.csv holds inbox conversations. Removals from that file only touch candidate rows.">
             <option value="connections">connections.csv</option>
             <option value="sales">sales-connections.csv</option>
             <option value="unrequited">unrequited-love.csv</option>

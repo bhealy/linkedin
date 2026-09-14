@@ -6,6 +6,7 @@ require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
 const { snapshotAll } = require('../lib/rolling-backup');
 const { normalizeKeywords } = require('../lib/keyword-filter');
+const { loadInboxCsv, isUnrequitedCandidate } = require('../lib/inbox-csv');
 
 const ROOT = path.join(__dirname, '..');
 const HOST = '127.0.0.1';
@@ -84,6 +85,25 @@ function broadcast(event) {
   for (const res of sseClients) {
     res.write(payload);
   }
+}
+
+function inboxCsvStats() {
+  const rows = loadInboxCsv(UNREQUITED_CSV);
+  let cacheComplete = false;
+  const statePath = path.join(ROOT, 'inbox-scan-state.json');
+  if (fs.existsSync(statePath)) {
+    try {
+      const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+      cacheComplete = Boolean(state && state.cacheComplete);
+    } catch (err) {
+      console.error(err.stack || err.message);
+    }
+  }
+  return {
+    conversationCount: rows.length,
+    unrequitedCount: rows.filter(isUnrequitedCandidate).length,
+    inboxCacheComplete: cacheComplete,
+  };
 }
 
 function csvRowCount(filePath) {
@@ -170,35 +190,51 @@ function summariseJobOutput(job) {
     return summary;
   }
 
-  if (job.name === 'inbox-scan') {
+  if (job.name === 'inbox-scan' || job.name === 'inbox-cache') {
     const listed = pickLog(
+      log,
+      /Listed ([0-9,]+) conversation\(s\); ([0-9,]+) in the latest window, ([0-9,]+) need a thread read/i
+    );
+    const listedLegacy = pickLog(
       log,
       /Listed ([0-9,]+) conversation\(s\); ([0-9,]+) in window, ([0-9,]+) unscanned/i
     );
+    const cacheListed = pickLog(log, /Listed this run:\s+([0-9,]+)/i);
+    const cacheSize = pickLog(log, /Conversation cache:\s+([0-9,]+)/i);
     const scanned = pickLog(log, /Scanned this run:\s+([0-9,]+)/i);
     const found = pickLog(log, /New candidates:\s+([0-9,]+)/i);
+    const ready = pickLog(log, /Ready to remove:\s+([0-9,]+)/i);
     const rows = pickLog(log, /Rows in CSV:\s+([0-9,]+)/i);
     const output = pickLog(log, /Output file:\s+(.+)/i);
     const undated = pickLog(log, /Skipped ([0-9,]+) conversation\(s\) with an unreadable date/i);
-    if (listed) {
-      summary.rows.push({ label: 'In date window', value: `${listed[2]} of ${listed[1]} listed` });
+    const caught = log.some((line) => /Caught up with the saved conversation cache/.test(line));
+    const match = listed || listedLegacy;
+    if (match) {
+      summary.rows.push({ label: 'Latest window', value: `${match[2]} of ${match[1]} listed` });
+      summary.rows.push({ label: 'Need a thread read', value: match[3] });
     }
+    if (cacheListed) summary.rows.push({ label: 'Listed this run', value: cacheListed[1] });
+    if (cacheSize) summary.rows.push({ label: 'Conversation cache', value: cacheSize[1] });
     if (scanned) summary.rows.push({ label: 'Conversations read', value: scanned[1] });
     if (found) summary.rows.push({ label: 'New candidates', value: found[1] });
-    if (rows) summary.rows.push({ label: 'Ready to remove', value: `${rows[1]} in unrequited-love.csv` });
+    if (ready) summary.rows.push({ label: 'Ready to remove', value: `${ready[1]} candidates` });
+    if (rows && !cacheSize) summary.rows.push({ label: 'Rows in CSV', value: rows[1] });
     const awaiting = pickLog(log, /Awaiting profile name:\s+([0-9,]+)/i);
     if (awaiting) {
       summary.rows.push({
         label: 'Awaiting profile name',
-        value: `${awaiting[1]} — scan again to finish them`,
+        value: `${awaiting[1]} — search again to finish them`,
       });
     }
     if (undated) summary.rows.push({ label: 'Skipped', value: `${undated[1]} with an unreadable date` });
     if (output) summary.rows.push({ label: 'Output file', value: output[1].trim() });
-    if (listed && listed[3] === '0') {
+    if (caught) {
+      summary.rows.push({ label: 'List', value: 'Stopped at the saved conversation cache' });
+    }
+    if (match && match[3] === '0') {
       summary.rows.push({
         label: 'Result',
-        value: 'Everything in this window was already scanned',
+        value: 'Nothing new to read in this window',
       });
     }
     return summary;
@@ -245,7 +281,7 @@ function statusPayload() {
     email: readEmailFromEnv(),
     connectionsCount: csvRowCount(CONNECTIONS_CSV),
     salesCount: csvRowCount(SALES_CSV),
-    unrequitedCount: csvRowCount(UNREQUITED_CSV),
+    ...inboxCsvStats(),
     analyticsExists: fs.existsSync(ANALYTICS_HTML),
     job: jobSnapshot(),
     history: jobHistory,
@@ -469,7 +505,30 @@ app.post('/api/jobs/inbox-scan', (req, res) => {
     }
     const job = startJob({
       name: 'inbox-scan',
-      label: 'Scan inbox',
+      label: 'Search for unrequited love',
+      detail: detailParts.join(' · '),
+      args,
+      password: body.password,
+    });
+    res.json({ ok: true, job });
+  } catch (err) {
+    console.error(err.stack || err.message);
+    res.status(err.statusCode || 400).json({ error: err.message });
+  }
+});
+
+app.post('/api/jobs/inbox-cache', (req, res) => {
+  try {
+    const body = req.body || {};
+    const args = [path.join(ROOT, 'scan-inbox.js'), '--cache'];
+    const detailParts = ['full conversation list'];
+    if (body.fresh) {
+      args.push('--fresh');
+      detailParts.push('fresh CSV and state');
+    }
+    const job = startJob({
+      name: 'inbox-cache',
+      label: 'Cache conversation list',
       detail: detailParts.join(' · '),
       args,
       password: body.password,
@@ -560,7 +619,7 @@ app.get('/unrequited-love.csv', (_req, res) => {
     res
       .status(404)
       .type('text')
-      .send('No candidates yet. Run an inbox scan from the dashboard first.');
+      .send('No candidates yet. Search for unrequited love from the dashboard first.');
     return;
   }
   res.type('text').send(fs.readFileSync(UNREQUITED_CSV, 'utf8'));

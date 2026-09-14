@@ -123,7 +123,7 @@ npm run connections:analytics:open</pre>
             <li><a href="#dive-months">Last N months</a></li>
             <li><a href="#dive-analytics">Analytics</a></li>
             <li><a href="#dive-scrape">Title scrape</a></li>
-            <li><a href="#dive-inbox">Inbox scan</a></li>
+            <li><a href="#dive-inbox">Unrequited love</a></li>
             <li><a href="#dive-remove">Remove</a></li>
             <li><a href="#dive-profile">Single profile</a></li>
             <li><a href="#dive-files">Files &amp; privacy</a></li>
@@ -210,26 +210,28 @@ npm run scrape:sales:fresh</pre>
           </article>
 
           <article id="dive-inbox">
-            <h3>6. Inbox scan: who never got a reply</h3>
-            <p>Opens LinkedIn Messaging, applies the <strong>Connections</strong> filter so only first-degree threads count, then walks every conversation whose latest activity falls inside <code>--days</code> (default 30). Threads are opened in parallel Chromium tabs (default 4) and each one is scrolled to the very top, so the whole history is read, not just the visible messages.</p>
-            <p>A connection becomes a candidate only when they sent at least one message and you sent <strong>none</strong> in that thread. Candidates are written to <code>unrequited-love.csv</code>; nothing is removed by the scan itself.</p>
+            <h3>6. Search for unrequited love</h3>
+            <p>Opens LinkedIn Messaging, applies the <strong>Connections</strong> filter, then reads connection threads whose latest activity falls inside <code>--days</code> (default 30). Threads are opened in parallel Chromium tabs (default 4) and scrolled to the top. A conversation is stored in <code>unrequited-love.csv</code> the first time it is seen. Later runs skip threads whose last activity has not changed.</p>
+            <p>A connection becomes a candidate only when they sent at least one message and you sent <strong>none</strong> in that thread. Candidate rows are the ones the Remove card uses; replied and listed rows stay in the same CSV as the cache. Nothing is removed by the search itself.</p>
+            <p>Use <strong>Cache conversation list</strong> (<code>--cache</code>) once to scroll the whole inbox and save every connection conversation without opening threads. After that, a search only loads the latest messages until it catches up with the cache, then decides from the CSV which threads still need a read.</p>
             <div class="code-block">
               <button type="button" class="copy-btn" aria-label="Copy code">Copy</button>
-              <pre>npm run inbox:scan
+              <pre>npm run inbox:cache
+npm run inbox:scan
 npm run inbox:scan -- --days 90 --limit 50 --tabs 4
 npm run inbox:scan:status
 npm run inbox:scan -- --fresh</pre>
             </div>
-            <p>Progress is stored in <code>inbox-scan-state.json</code>, keyed by name, timestamp and message snippet, so runs resume and a thread is read again only when it has new activity. Every message counts, including attachments and emoji, so an image-only reply from you still protects that connection from being flagged.</p>
-            <p>Thread headers link to obfuscated member ids, which the remover cannot use, so each candidate's profile is visited once at the end of a run to resolve the real vanity name. Only resolved rows reach the CSV.</p>
+            <p>Every message counts, including attachments and emoji, so an image-only reply from you still protects that connection from being flagged. Thread headers often use obfuscated member ids, so each candidate's profile is visited once to resolve the vanity name before it is ready to remove.</p>
             <table>
               <thead>
                 <tr><th>Flag</th><th>Description</th></tr>
               </thead>
               <tbody>
                 <tr><td><code>--days</code></td><td>How far back to look, by last activity (default 30)</td></tr>
-                <tr><td><code>--limit</code></td><td>Max unscanned conversations to open this run</td></tr>
-                <tr><td><code>--tabs</code></td><td>Parallel Chromium tabs for reading threads and resolving profile names (default 4)</td></tr>
+                <tr><td><code>--limit</code></td><td>Max conversations to open this run</td></tr>
+                <tr><td><code>--tabs</code></td><td>Parallel Chromium tabs for reading threads (default 4)</td></tr>
+                <tr><td><code>--cache</code></td><td>Scroll the whole conversation list into the CSV without opening threads</td></tr>
                 <tr><td><code>--csv</code></td><td>Output path (default <code>unrequited-love.csv</code>)</td></tr>
                 <tr><td><code>--fresh</code></td><td>Back up, then reset the CSV and scan state</td></tr>
                 <tr><td><code>--status</code></td><td>Print scanned, found and ready-to-remove counts</td></tr>
@@ -291,7 +293,7 @@ npm run profile:html:open</pre>
                 <tr><td><code>.env</code></td><td>Your email / optional session cookie</td></tr>
                 <tr><td><code>.linkedin-session/</code></td><td>Logged-in browser profile</td></tr>
                 <tr><td><code>connections.csv</code>, <code>sales-connections.csv</code></td><td>Your network</td></tr>
-                <tr><td><code>unrequited-love.csv</code></td><td>People who messaged you without a reply</td></tr>
+                <tr><td><code>unrequited-love.csv</code></td><td>Inbox conversation cache plus unrequited candidates</td></tr>
                 <tr><td><code>connections-analytics.html</code></td><td>Embedded contact list</td></tr>
                 <tr><td><code>profiles/</code></td><td>Archived profile dumps</td></tr>
                 <tr><td><code>*-state.json</code>, <code>remove-connections-results.json</code></td><td>Progress and personal IDs</td></tr>
