@@ -45,6 +45,7 @@ const LIST_STALL_LIMIT = 10;
 const CACHE_PERSIST_EVERY = 25;
 const LIST_RECOVERY_LIMIT = 3;
 const BROWSER_CLOSE_TIMEOUT_MS = 8000;
+const BROWSER_KILL_GRACE_MS = 5000;
 const THREAD_PAUSE_MS = 1500;
 let activeBrowser = null;
 let pauseRequested = false;
@@ -1162,18 +1163,22 @@ async function closeActiveBrowser() {
     return;
   }
   // An orphaned Chromium keeps the profile locked, which stops the next run
-  // from launching at all, so stop waiting on a clean close and kill it.
+  // from launching at all. SIGTERM still lets it flush its preferences, so
+  // only fall back to SIGKILL if it ignores that too.
   const child = browser.process();
-  const hardKill = setTimeout(() => {
-    child?.kill('SIGKILL');
-  }, BROWSER_CLOSE_TIMEOUT_MS);
+  const timers = [
+    setTimeout(() => child?.kill('SIGTERM'), BROWSER_CLOSE_TIMEOUT_MS),
+    setTimeout(() => child?.kill('SIGKILL'), BROWSER_CLOSE_TIMEOUT_MS + BROWSER_KILL_GRACE_MS),
+  ];
   try {
     await browser.close();
   } catch (err) {
     console.error(err.stack || err.message);
-    child?.kill('SIGKILL');
+    child?.kill('SIGTERM');
   } finally {
-    clearTimeout(hardKill);
+    for (const timer of timers) {
+      clearTimeout(timer);
+    }
   }
 }
 
