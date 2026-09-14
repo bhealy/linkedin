@@ -263,7 +263,7 @@
             <div class="review-files">
               <div class="review-file"><div><span class="file-icon">↗</span><p><strong>connections.csv</strong><small>Your complete local connection list</small></p></div><a id="open-connections" class="button-link" href="/connections.csv" target="_blank" rel="noopener">Review file</a></div>
               <div class="review-file"><div><span class="file-icon">↗</span><p><strong>sales-connections.csv</strong><small>Optional title-classified results</small></p></div><a id="open-sales" class="button-link" href="/sales-connections.csv" target="_blank" rel="noopener">Review file</a></div>
-              <div class="review-file"><div><span class="file-icon">↗</span><p><strong>unrequited-love.csv</strong><small><b id="review-candidate-count">0</b> candidates currently ready to review</small></p></div><a id="open-unrequited" class="button-link" href="/unrequited-love.csv" target="_blank" rel="noopener" data-tooltip="Open unrequited-love.csv. Candidate rows are the ones to remove.">Review candidates</a></div>
+              <div class="review-file"><div><span class="file-icon">↗</span><p><strong>unrequited-love.csv</strong><small><b id="review-candidate-count">0</b> candidates currently ready to review</small></p></div><button type="button" id="open-unrequited" data-tooltip="Open the Analytics tab and filter the conversation explorer to unrequited candidates.">Review candidates</button></div>
             </div>
           </div>
         </section>
@@ -351,7 +351,7 @@
       <pre id="success-stack" class="result-stack" hidden></pre>
       <div class="row modal-actions">
         <button type="button" id="success-close" class="primary">Close</button>
-        <a id="success-review" class="button-link" href="/unrequited-love.csv" target="_blank" rel="noopener" data-tooltip="Open unrequited-love.csv to review the candidates before removing anyone." hidden>Review candidates</a>
+        <button type="button" id="success-review" data-tooltip="Open the Analytics tab and filter the conversation explorer to unrequited candidates." hidden>Review candidates</button>
       </div>
     </div>
   </div>

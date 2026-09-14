@@ -789,6 +789,11 @@ document.querySelectorAll('[data-conn-timeline]').forEach((button) => {
 document.querySelectorAll('[data-analytics-tab]').forEach((button) => {
   button.addEventListener('click', () => showAnalyticsTab(button.dataset.analyticsTab));
 });
+document.getElementById('open-unrequited').addEventListener('click', openUnrequitedCandidates);
+document.getElementById('success-review').addEventListener('click', () => {
+  hideSuccessModal();
+  openUnrequitedCandidates();
+});
 
 function appendLog(line) {
   logEl.textContent += `${line}\n`;
@@ -1108,6 +1113,22 @@ function setReviewFileState(id, available) {
   }
   link.closest('.review-file').classList.toggle('unavailable', !available);
   link.setAttribute('aria-disabled', available ? 'false' : 'true');
+  if (link.tagName === 'BUTTON') {
+    link.disabled = !available;
+  }
+}
+
+function openUnrequitedCandidates() {
+  document.getElementById('intel-kind').value = 'unrequited';
+  intelligence.page = 1;
+  // showWorkspaceTab loads whichever analytics tab this names, so setting it
+  // first keeps the explorer to a single fetch.
+  intelligence.tab = 'conversations';
+  showWorkspaceTab('analytics', { updateHash: true });
+  document.getElementById('step-insights').scrollIntoView({
+    behavior: 'smooth',
+    block: 'start',
+  });
 }
 
 function selectedSourceAvailable(status) {
