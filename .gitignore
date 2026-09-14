@@ -7,6 +7,8 @@ scrape-state.json
 remove-connections-state.json
 remove-connections-results.json
 download-connections-state.json
+inbox-scan-state.json
+unrequited-love.csv
 connections-analytics.html
 .linkedin-session/
 .backups/
