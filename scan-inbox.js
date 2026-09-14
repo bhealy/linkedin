@@ -8,7 +8,7 @@ const {
   sleep,
 } = require('./lib/linkedin-auth');
 const { cutoffForDays, parseThreadDate } = require('./lib/inbox-thread-date');
-const { escapeCsv, parseCsvRow } = require('./lib/connections-csv');
+const { escapeCsv } = require('./lib/connections-csv');
 const {
   removeProtectedFile,
   snapshotAll,
@@ -20,6 +20,8 @@ const OUTPUT_FILE = path.join(__dirname, 'unrequited-love.csv');
 const STATE_FILE = path.join(__dirname, 'inbox-scan-state.json');
 const STATE_VERSION = 1;
 const DEFAULT_DAYS = 30;
+const THREAD_PAUSE_MS = 1500;
+const PROFILE_PAUSE_MS = 2500;
 const CSV_FIELDS = [
   'name',
   'title',
@@ -69,6 +71,7 @@ function emptyState(days) {
     version: STATE_VERSION,
     days,
     scanned: {},
+    candidates: {},
     updatedAt: new Date().toISOString(),
   };
 }
@@ -79,7 +82,7 @@ function loadState(days) {
   }
   try {
     const state = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
-    if (!state || typeof state.scanned !== 'object') {
+    if (!state || typeof state !== 'object') {
       return emptyState(days);
     }
     return {
@@ -87,6 +90,7 @@ function loadState(days) {
       version: STATE_VERSION,
       days,
       scanned: state.scanned || {},
+      candidates: state.candidates || {},
     };
   } catch (err) {
     console.error(err.stack || err.message);
@@ -112,306 +116,374 @@ function vanityFromUrl(url) {
   }
 }
 
-function loadCandidates(filePath) {
-  if (!fs.existsSync(filePath)) {
-    return [];
-  }
-  const lines = fs
-    .readFileSync(filePath, 'utf8')
-    .split(/\r?\n/)
-    .filter((line) => line.trim());
-  if (lines.length < 2) {
-    return [];
-  }
-  const header = parseCsvRow(lines[0]).map((field) => field.trim().toLowerCase());
-  return lines.slice(1).map((line) => {
-    const fields = parseCsvRow(line);
-    const value = (name) => fields[header.indexOf(name)] || '';
-    return {
-      name: value('name'),
-      title: value('title'),
-      profileUrl: value('profile_url'),
-      vanityName: value('vanity_name'),
-      connectedOn: value('connected_on'),
-      disconnected: value('disconnected'),
-      disconnectedOn: value('disconnected_on'),
-      lastActivity: value('last_activity'),
-      inboundCount: value('inbound_count'),
-      scannedAt: value('scanned_at'),
-    };
-  });
+function isObfuscatedVanity(vanityName) {
+  return /^ACoAA/i.test(String(vanityName || ''));
 }
 
-function writeCandidates(rows, filePath) {
+function writeCandidatesCsv(state, filePath) {
+  const rows = Object.values(state.candidates || {}).filter(
+    (candidate) => candidate.vanityName && !isObfuscatedVanity(candidate.vanityName)
+  );
   const lines = [
     CSV_FIELDS.join(','),
     ...rows.map((row) =>
       [
-        row.name,
-        row.title,
-        row.profileUrl,
+        row.name || '',
+        row.title || '',
+        row.profileUrl || '',
         row.vanityName,
-        row.connectedOn,
-        row.disconnected,
-        row.disconnectedOn,
-        row.lastActivity,
-        row.inboundCount,
-        row.scannedAt,
+        '',
+        '',
+        '',
+        row.activityText || '',
+        String(row.inbound ?? ''),
+        row.scannedAt || '',
       ]
         .map(escapeCsv)
         .join(',')
     ),
   ];
   writeProtectedFile(filePath, `${lines.join('\n')}\n`);
+  return rows.length;
 }
 
-async function clickConnectionsFilter(page) {
+const CONNECTIONS_FILTER_STATE = () => {
+  const element = [...document.querySelectorAll('button, [role="button"]')].find(
+    (candidate) => candidate.textContent.trim() === 'Connections'
+  );
+  if (!element) {
+    return 'missing';
+  }
+  const selected =
+    element.getAttribute('aria-pressed') === 'true' ||
+    element.getAttribute('aria-checked') === 'true' ||
+    element.getAttribute('aria-selected') === 'true' ||
+    /\bactive\b|\bselected\b/.test(element.className);
+  return selected ? 'selected' : 'available';
+};
+
+async function selectConnectionsFilter(page) {
   await page.waitForFunction(
     () =>
       [...document.querySelectorAll('button, [role="button"]')].some(
-        (element) => element.textContent.trim() === 'Connections'
+        (candidate) => candidate.textContent.trim() === 'Connections'
       ),
     { timeout: 30000 }
   );
-  const clicked = await page.evaluate(() => {
-    const element = [...document.querySelectorAll('button, [role="button"]')].find(
-      (candidate) => candidate.textContent.trim() === 'Connections'
-    );
-    if (!element) {
-      return false;
-    }
-    element.click();
-    return true;
-  });
-  if (!clicked) {
-    throw new Error('Could not find the Connections inbox filter.');
+
+  if ((await page.evaluate(CONNECTIONS_FILTER_STATE)) === 'available') {
+    await page.evaluate(() => {
+      [...document.querySelectorAll('button, [role="button"]')]
+        .find((candidate) => candidate.textContent.trim() === 'Connections')
+        ?.click();
+    });
+    await sleep(2000);
   }
-  await sleep(1200);
-  const selected = await page.evaluate(() => {
-    const element = [...document.querySelectorAll('button, [role="button"]')].find(
-      (candidate) => candidate.textContent.trim() === 'Connections'
-    );
-    if (!element) {
-      return false;
-    }
-    return (
-      element.getAttribute('aria-pressed') === 'true' ||
-      element.getAttribute('aria-selected') === 'true' ||
-      /\bactive\b|\bselected\b/.test(element.className)
-    );
-  });
-  if (!selected) {
-    throw new Error('LinkedIn did not select the Connections inbox filter.');
+
+  if ((await page.evaluate(CONNECTIONS_FILTER_STATE)) !== 'selected') {
+    throw new Error('LinkedIn did not apply the Connections inbox filter.');
   }
 }
 
-async function collectThreads(page, cutoff) {
+async function readConversationList(page) {
+  return page.evaluate(() => {
+    const clean = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+    return [...document.querySelectorAll('li.msg-conversation-listitem')].map(
+      (item) => {
+        const name = clean(
+          item.querySelector('h3, [class*="participant-names"]')?.textContent
+        );
+        const activityText = clean(
+          item.querySelector('time, [class*="time-stamp"]')?.textContent
+        );
+        const snippet = clean(
+          item.querySelector('[class*="message-snippet"]')?.textContent
+        ).slice(0, 80);
+        return {
+          key: `${name}|${activityText}|${snippet}`,
+          name,
+          activityText,
+          snippet,
+        };
+      }
+    );
+  });
+}
+
+async function scrollConversationList(page) {
+  return page.evaluate(() => {
+    const list = document.querySelector(
+      'ul.msg-conversations-container__conversations-list'
+    );
+    if (!list) {
+      throw new Error('Could not find the inbox conversation list.');
+    }
+    const before = list.scrollTop;
+    list.scrollTop = list.scrollHeight;
+    return list.scrollTop > before;
+  });
+}
+
+async function collectConversations(page, cutoff) {
   const collected = new Map();
   let stableRounds = 0;
-  let passedCutoff = false;
+  let reachedCutoff = false;
 
-  for (let round = 0; round < 250 && stableRounds < 6 && !passedCutoff; round += 1) {
-    const batch = await page.evaluate(() => {
-      const itemSelector = [
-        'li.msg-conversation-listitem',
-        'li[class*="conversation-listitem"]',
-        '[data-view-name="message-list-item"]',
-      ].join(',');
-      return [...document.querySelectorAll(itemSelector)].map((item, index) => {
-        const link = item.querySelector('a[href*="/messaging/thread/"]');
-        const time = item.querySelector(
-          'time, .msg-conversation-listitem__time-stamp, [class*="time-stamp"]'
-        );
-        const name = item.querySelector(
-          '.msg-conversation-listitem__participant-names, [class*="participant-names"], h3'
-        );
-        const title = item.querySelector(
-          '.msg-conversation-listitem__message-snippet, [class*="message-snippet"]'
-        );
-        const href = link ? new URL(link.href, location.href).href : '';
-        const id =
-          item.getAttribute('data-conversation-id') ||
-          href.match(/\/messaging\/thread\/([^/?#]+)/)?.[1] ||
-          `${name?.textContent.trim() || 'thread'}-${time?.textContent.trim() || index}`;
-        return {
-          id,
-          href,
-          name: name?.textContent.trim() || '',
-          title: title?.textContent.trim() || '',
-          activityText:
-            time?.getAttribute('datetime') ||
-            time?.getAttribute('aria-label') ||
-            time?.textContent.trim() ||
-            '',
-        };
-      });
-    });
-
+  for (let round = 0; round < 200 && stableRounds < 4 && !reachedCutoff; round += 1) {
+    const batch = await readConversationList(page);
     const before = collected.size;
-    for (const thread of batch) {
-      if (thread.id && thread.href) {
-        collected.set(thread.id, thread);
+    for (const entry of batch) {
+      if (!entry.name) {
+        continue;
       }
-      const activity = parseThreadDate(thread.activityText);
+      collected.set(entry.key, entry);
+      const activity = parseThreadDate(entry.activityText);
       if (activity && activity.getTime() < cutoff.getTime()) {
-        passedCutoff = true;
+        reachedCutoff = true;
       }
     }
     stableRounds = collected.size === before ? stableRounds + 1 : 0;
-    await page.evaluate(() => {
-      const selectors = [
-        '.msg-conversations-container__conversations-list',
-        '.msg-conversations-container__convo-list',
-        '[class*="conversations-list"]',
-      ];
-      const container = selectors
-        .map((selector) => document.querySelector(selector))
-        .find((element) => element && element.scrollHeight > element.clientHeight);
-      if (!container) {
-        throw new Error('Could not find the scrollable inbox conversation list.');
-      }
-      container.scrollTop = container.scrollHeight;
-    });
-    await sleep(800);
+    if (reachedCutoff) {
+      break;
+    }
+    await scrollConversationList(page);
+    await sleep(900);
   }
 
-  return [...collected.values()].filter((thread) => {
-    const activity = parseThreadDate(thread.activityText);
-    return activity && activity.getTime() >= cutoff.getTime();
-  });
+  const inWindow = [];
+  let undated = 0;
+  for (const entry of collected.values()) {
+    const activity = parseThreadDate(entry.activityText);
+    if (!activity) {
+      undated += 1;
+      continue;
+    }
+    if (activity.getTime() >= cutoff.getTime()) {
+      inWindow.push(entry);
+    }
+  }
+  return { inWindow, total: collected.size, undated };
 }
 
-async function getSelfName(page) {
-  return page.evaluate(() => {
-    const candidates = [
-      document.querySelector('.global-nav__me-photo'),
-      document.querySelector('button[aria-label*="Me"] img'),
-      document.querySelector('img.global-nav__me-photo'),
-    ];
-    for (const element of candidates) {
-      const text = element?.getAttribute('alt')?.trim();
-      if (text) {
-        return text.replace(/^Photo of\s+/i, '');
+async function openConversation(page, entry) {
+  const previousUrl = page.url();
+  const clicked = await page.evaluate((key) => {
+    const clean = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+    const item = [...document.querySelectorAll('li.msg-conversation-listitem')].find(
+      (candidate) => {
+        const name = clean(
+          candidate.querySelector('h3, [class*="participant-names"]')?.textContent
+        );
+        const activityText = clean(
+          candidate.querySelector('time, [class*="time-stamp"]')?.textContent
+        );
+        const snippet = clean(
+          candidate.querySelector('[class*="message-snippet"]')?.textContent
+        ).slice(0, 80);
+        return `${name}|${activityText}|${snippet}` === key;
       }
+    );
+    if (!item) {
+      return false;
     }
-    return '';
-  });
+    const link = item.querySelector('.msg-conversation-listitem__link') || item;
+    link.scrollIntoView({ block: 'center' });
+    link.click();
+    return true;
+  }, entry.key);
+
+  if (!clicked) {
+    return { opened: false, reason: 'conversation no longer in the list' };
+  }
+
+  try {
+    await page.waitForFunction(
+      (seenUrl) =>
+        location.href.includes('/messaging/thread/') && location.href !== seenUrl,
+      { timeout: 20000 },
+      previousUrl
+    );
+  } catch (err) {
+    console.error(err.stack || err.message);
+    return { opened: false, reason: 'conversation did not open' };
+  }
+
+  const threadId =
+    page.url().match(/\/messaging\/thread\/([^/?#]+)/)?.[1] || '';
+
+  try {
+    await page.waitForSelector('.msg-s-event-listitem', { timeout: 15000 });
+  } catch (err) {
+    console.error(err.stack || err.message);
+    return { opened: false, reason: 'no message history in this conversation', threadId };
+  }
+
+  return { opened: true, threadId };
 }
 
 async function scrollWholeThread(page) {
-  let stableRounds = 0;
   let previousSignature = '';
-  for (let round = 0; round < 250 && stableRounds < 6; round += 1) {
+  let stableRounds = 0;
+
+  for (let round = 0; round < 250 && stableRounds < 4; round += 1) {
     const signature = await page.evaluate(() => {
-      const selectors = [
-        '.msg-s-message-list-container',
+      const candidates = [
         '.msg-s-message-list',
-        '[class*="message-list-container"]',
-      ];
-      const container = selectors
+        '.msg-s-message-list-container',
+      ]
         .map((selector) => document.querySelector(selector))
-        .find((element) => element && element.scrollHeight >= element.clientHeight);
-      if (!container) {
+        .filter(Boolean);
+      const pane =
+        candidates.find((element) => element.scrollHeight > element.clientHeight) ||
+        candidates[0];
+      if (!pane) {
         throw new Error('Could not find the conversation message pane.');
       }
-      const olderButton = [...container.querySelectorAll('button')].find((button) =>
-        /load more|see older|show previous/i.test(button.textContent)
+      const olderButton = [...pane.querySelectorAll('button')].find((button) =>
+        /load more|see older|show previous|load previous/i.test(button.textContent)
       );
       olderButton?.click();
-      container.scrollTop = 0;
-      const bodyCount = container.querySelectorAll(
-        '.msg-s-event-listitem__body'
-      ).length;
-      const count =
-        bodyCount ||
-        container.querySelectorAll('[class*="message-bubble"]').length;
-      return `${container.scrollHeight}:${count}:${Math.round(container.scrollTop)}`;
+      pane.scrollTop = 0;
+      const count = pane.querySelectorAll('.msg-s-event-listitem').length;
+      return `${pane.scrollHeight}:${count}`;
     });
+
     stableRounds = signature === previousSignature ? stableRounds + 1 : 0;
     previousSignature = signature;
-    await sleep(800);
+    await sleep(700);
   }
 }
 
-async function inspectThread(page, selfName, fallbackName, activityText) {
+async function classifyThread(page, selfName) {
   return page.evaluate(
-    ({ selfName, fallbackName, activityText }) => {
-      const normal = (value) =>
-        String(value || '')
-          .replace(/\s+/g, ' ')
-          .trim()
-          .toLowerCase();
-      const messageBodies = [
-        ...document.querySelectorAll('.msg-s-event-listitem__body'),
-      ];
-      const bodies = (
-        messageBodies.length
-          ? messageBodies
-          : [...document.querySelectorAll('[class*="message-bubble"]')]
-      ).filter((body) => normal(body.textContent));
+    (selfName) => {
+      const clean = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+      const same = (a, b) => clean(a).toLowerCase() === clean(b).toLowerCase();
+      const events = [...document.querySelectorAll('.msg-s-event-listitem')];
+
       let inbound = 0;
       let outbound = 0;
-      let unknown = 0;
-      for (const body of bodies) {
-        const event = body.closest(
-          '.msg-s-event-listitem, .msg-s-message-list__event, li'
+      let conflicts = 0;
+
+      for (const event of events) {
+        const fromOther = event.classList.contains('msg-s-event-listitem--other');
+        const sender = clean(
+          event.querySelector('[class*="message-group__name"]')?.textContent ||
+            event.querySelector('img')?.getAttribute('alt')
         );
-        const group = body.closest(
-          '.msg-s-message-group, [class*="message-group"]'
-        );
-        const classText = `${event?.className || ''} ${group?.className || ''}`;
-        const sender = group?.querySelector(
-          '.msg-s-message-group__name, [class*="message-group__name"]'
-        )?.textContent;
-        if (/from-me|is-own|outgoing|--self/.test(classText)) {
-          outbound += 1;
-        } else if (/--other|incoming|from-other/.test(classText)) {
-          inbound += 1;
-        } else if (sender && selfName && normal(sender) === normal(selfName)) {
-          outbound += 1;
-        } else if (sender) {
+        if (sender && selfName) {
+          const senderIsSelf = same(sender, selfName);
+          if (senderIsSelf === fromOther) {
+            conflicts += 1;
+            continue;
+          }
+        }
+        if (fromOther) {
           inbound += 1;
         } else {
-          unknown += 1;
+          outbound += 1;
         }
       }
 
-      const header =
-        document.querySelector('.msg-thread, .msg-overlay-conversation-bubble') ||
-        document.querySelector('main') ||
-        document;
-      const profileLink = header.querySelector('a[href*="/in/"]');
-      const name =
-        header.querySelector(
-          '.msg-entity-lockup__entity-title, [class*="entity-title"], h2'
-        )?.textContent.trim() ||
-        profileLink?.textContent.trim() ||
-        fallbackName;
-      const title =
-        header.querySelector(
-          '.msg-entity-lockup__entity-subtitle, [class*="entity-subtitle"]'
-        )?.textContent.trim() || '';
+      const lockup = document.querySelector('.msg-entity-lockup');
+      const profileLink =
+        lockup?.querySelector('a[href*="/in/"]') ||
+        document.querySelector('main a[href*="/in/"]');
+      const title = clean(
+        lockup?.querySelector('[class*="entity-info"], [class*="entity-subtitle"]')
+          ?.textContent
+      ).replace(/^Status is (?:offline|online|reachable)\s*/i, '');
+
       return {
-        name,
-        title,
-        profileUrl: profileLink?.href || '',
-        activityText,
+        events: events.length,
         inbound,
         outbound,
-        unknown,
+        conflicts,
+        profileUrl: profileLink?.href || '',
+        title,
       };
     },
-    { selfName, fallbackName, activityText }
+    selfName
   );
+}
+
+async function readSelfName(page) {
+  const name = await page.evaluate(() => {
+    const alt =
+      document.querySelector('.global-nav__me-photo')?.getAttribute('alt') ||
+      document.querySelector('img[class*="me-photo"]')?.getAttribute('alt') ||
+      '';
+    return alt.replace(/^Photo of\s+/i, '').trim();
+  });
+  if (!name) {
+    throw new Error(
+      'Could not read the signed-in LinkedIn name needed to tell your messages apart.'
+    );
+  }
+  return name;
+}
+
+async function resolveVanityNames(page, state) {
+  const pending = Object.entries(state.candidates || {}).filter(
+    ([, candidate]) =>
+      !candidate.vanityName || isObfuscatedVanity(candidate.vanityName)
+  );
+  if (!pending.length) {
+    return 0;
+  }
+
+  console.log(`Resolving profile names for ${pending.length} candidate(s)…`);
+  let resolved = 0;
+
+  for (const [threadId, candidate] of pending) {
+    if (!candidate.profileUrl) {
+      continue;
+    }
+    try {
+      await page.goto(candidate.profileUrl, {
+        waitUntil: 'domcontentloaded',
+        timeout: 60000,
+      });
+      await sleep(PROFILE_PAUSE_MS);
+      const finalUrl = page.url();
+      const vanityName = vanityFromUrl(finalUrl);
+      if (!vanityName || isObfuscatedVanity(vanityName)) {
+        console.log(`  ${candidate.name}: could not resolve a profile name`);
+        continue;
+      }
+      state.candidates[threadId] = {
+        ...candidate,
+        vanityName,
+        profileUrl: `https://www.linkedin.com/in/${vanityName}/`,
+      };
+      saveState(state);
+      resolved += 1;
+      console.log(`  ${candidate.name} → ${vanityName}`);
+    } catch (err) {
+      console.error(err.stack || err.message);
+    }
+  }
+
+  return resolved;
+}
+
+function printStatus(state, csvPath) {
+  const scanned = Object.keys(state.scanned || {}).length;
+  const candidates = Object.values(state.candidates || {});
+  const resolved = candidates.filter(
+    (candidate) => candidate.vanityName && !isObfuscatedVanity(candidate.vanityName)
+  ).length;
+  console.log(`Scanned conversations: ${scanned}`);
+  console.log(`Candidates found:      ${candidates.length}`);
+  console.log(`Ready to remove:       ${resolved}`);
+  console.log(`Output file:           ${csvPath}`);
 }
 
 async function main() {
   const args = parseArgs(process.argv);
+
   if (args.status) {
-    const state = loadState(args.days);
-    console.log(`Scanned threads: ${Object.keys(state.scanned).length}`);
-    console.log(`Candidates: ${loadCandidates(args.csv).length}`);
-    console.log(`Output file: ${args.csv}`);
+    printStatus(loadState(args.days), args.csv);
     return;
   }
 
@@ -420,11 +492,8 @@ async function main() {
     removeProtectedFile(STATE_FILE);
     removeProtectedFile(args.csv);
   }
+
   const state = loadState(args.days);
-  const candidates = loadCandidates(args.csv);
-  const candidateVanities = new Set(
-    candidates.map((row) => row.vanityName.toLowerCase()).filter(Boolean)
-  );
   const cutoff = cutoffForDays(args.days);
   let browser;
 
@@ -433,88 +502,104 @@ async function main() {
     const page = await browser.newPage();
     await ensureLoggedIn(page, MESSAGING_URL);
     await page.waitForSelector('main', { timeout: 30000 });
-    console.log('Selecting Connections inbox filter…');
-    await clickConnectionsFilter(page);
-    console.log(`Loading conversations from the last ${args.days} day(s)…`);
-    const threads = await collectThreads(page, cutoff);
-    const pending = threads.filter((thread) => !state.scanned[thread.id]);
-    const selected = args.limit ? pending.slice(0, args.limit) : pending;
-    const selfName = await getSelfName(page);
-    console.log(`Found ${threads.length} in-window conversation(s); scanning ${selected.length}.`);
 
+    const selfName = await readSelfName(page);
+    console.log(`Signed in as ${selfName}`);
+
+    console.log('Applying the Connections inbox filter…');
+    await selectConnectionsFilter(page);
+    await page.waitForSelector('li.msg-conversation-listitem', { timeout: 30000 });
+
+    console.log(`Loading conversations active in the last ${args.days} day(s)…`);
+    const { inWindow, total, undated } = await collectConversations(page, cutoff);
+    if (undated) {
+      console.log(`Skipped ${undated} conversation(s) with an unreadable date.`);
+    }
+
+    const pending = inWindow.filter((entry) => !state.scanned[entry.key]);
+    const selected = args.limit ? pending.slice(0, args.limit) : pending;
+    console.log(
+      `Listed ${total} conversation(s); ${inWindow.length} in window, ${pending.length} unscanned, scanning ${selected.length}.`
+    );
+
+    let found = 0;
     for (let index = 0; index < selected.length; index += 1) {
-      const thread = selected[index];
-      console.log(`[${index + 1}/${selected.length}] ${thread.name || thread.id}`);
-      let result;
+      const entry = selected[index];
+      const label = `[${index + 1}/${selected.length}] ${entry.name} (${entry.activityText})`;
+      let outcome;
+
       try {
-        await page.goto(thread.href, {
-          waitUntil: 'domcontentloaded',
-          timeout: 60000,
-        });
-        await page.waitForSelector(
-          '.msg-s-message-list-container, .msg-s-message-list, [class*="message-list-container"]',
-          { timeout: 30000 }
-        );
-        await scrollWholeThread(page);
-        result = await inspectThread(
-          page,
-          selfName,
-          thread.name,
-          thread.activityText
-        );
+        const opened = await openConversation(page, entry);
+        if (!opened.opened) {
+          console.log(`${label} — skipped: ${opened.reason}`);
+          outcome = { status: 'skipped', reason: opened.reason };
+        } else {
+          await scrollWholeThread(page);
+          const result = await classifyThread(page, selfName);
+          const vanityName = vanityFromUrl(result.profileUrl);
+
+          if (!vanityName) {
+            console.log(`${label} — skipped: no member profile link`);
+            outcome = { status: 'skipped', reason: 'no profile link' };
+          } else if (result.conflicts > 0) {
+            console.log(
+              `${label} — skipped: ${result.conflicts} message(s) with an unclear sender`
+            );
+            outcome = { status: 'skipped', reason: 'unclear sender' };
+          } else if (result.inbound > 0 && result.outbound === 0) {
+            found += 1;
+            state.candidates[opened.threadId] = {
+              name: entry.name,
+              title: result.title,
+              profileUrl: result.profileUrl,
+              vanityName,
+              activityText: entry.activityText,
+              inbound: result.inbound,
+              scannedAt: new Date().toISOString(),
+            };
+            console.log(
+              `${label} — candidate: ${result.inbound} message(s) in, no reply`
+            );
+            outcome = { status: 'candidate', threadId: opened.threadId };
+          } else {
+            console.log(
+              `${label} — keeping: ${result.inbound} in, ${result.outbound} out`
+            );
+            outcome = { status: 'replied' };
+          }
+          outcome = {
+            ...outcome,
+            inbound: result.inbound,
+            outbound: result.outbound,
+            messages: result.events,
+          };
+        }
       } catch (err) {
         console.error(err.stack || err.message);
-        state.scanned[thread.id] = {
-          status: 'error',
-          error: err.message,
-          scannedAt: new Date().toISOString(),
-        };
-        saveState(state);
-        continue;
+        outcome = { status: 'error', reason: err.message };
       }
 
-      const vanityName = vanityFromUrl(result.profileUrl);
-      let status = 'not-candidate';
-      if (!vanityName) {
-        status = 'skipped-no-profile';
-      } else if (result.unknown > 0) {
-        status = 'skipped-unknown-sender';
-      } else if (result.inbound > 0 && result.outbound === 0) {
-        status = 'candidate';
-        if (!candidateVanities.has(vanityName.toLowerCase())) {
-          candidates.push({
-            name: result.name,
-            title: result.title,
-            profileUrl: result.profileUrl,
-            vanityName,
-            connectedOn: '',
-            disconnected: '',
-            disconnectedOn: '',
-            lastActivity: result.activityText,
-            inboundCount: String(result.inbound),
-            scannedAt: new Date().toISOString(),
-          });
-          candidateVanities.add(vanityName.toLowerCase());
-          writeCandidates(candidates, args.csv);
-        }
-      }
-      state.scanned[thread.id] = {
-        status,
-        vanityName,
-        inbound: result.inbound,
-        outbound: result.outbound,
-        unknown: result.unknown,
+      state.scanned[entry.key] = {
+        ...outcome,
+        name: entry.name,
+        activityText: entry.activityText,
         scannedAt: new Date().toISOString(),
       };
       saveState(state);
+      await sleep(THREAD_PAUSE_MS);
     }
 
-    if (!fs.existsSync(args.csv)) {
-      writeCandidates(candidates, args.csv);
-    }
-    console.log(`Scanned this run: ${selected.length}`);
-    console.log(`Candidates in CSV: ${candidates.length}`);
-    console.log(`Output file: ${args.csv}`);
+    await resolveVanityNames(page, state);
+    const written = writeCandidatesCsv(state, args.csv);
+
+    console.log('');
+    console.log(`Scanned this run:  ${selected.length}`);
+    console.log(`New candidates:    ${found}`);
+    console.log(`Rows in CSV:       ${written}`);
+    console.log(`Output file:       ${args.csv}`);
+    console.log('');
+    console.log('Review the CSV, then preview removals with:');
+    console.log(`  npm run connections:remove -- --csv ${args.csv} --limit 20`);
   } finally {
     if (browser) {
       await browser.close();
