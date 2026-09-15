@@ -24,6 +24,7 @@ const {
   setSourceContactProtected,
 } = require('../lib/source-protection');
 const { scrapeThreadMessages } = require('../lib/thread-messages');
+const { createJobEtaTracker, formatEtaRemaining } = require('../lib/job-eta');
 
 const ROOT = path.join(__dirname, '..');
 const HOST = '127.0.0.1';
@@ -93,6 +94,9 @@ function appendLog(text) {
         }
       } else {
         currentJob.statusLine = line.trim();
+        if (currentJob.etaTracker) {
+          currentJob.eta = currentJob.etaTracker.observe(line);
+        }
         jobChanged = true;
       }
     }
@@ -346,6 +350,39 @@ function summariseJobOutput(job) {
   return summary;
 }
 
+function etaSnapshot(job, at = Date.now()) {
+  if (!job) {
+    return null;
+  }
+  const eta =
+    job.eta && typeof job.eta === 'object'
+      ? job.eta
+      : job.etaTracker
+        ? job.etaTracker.snapshot(at)
+        : null;
+  if (!eta) {
+    return null;
+  }
+  // Recompute remaining from the last estimate so idle gaps between log lines
+  // still count down in the UI.
+  let etaMs = eta.etaMs;
+  let etaLabel = eta.etaLabel;
+  if (etaMs != null && eta.progress && eta.progress.total != null) {
+    const age = Math.max(0, at - (eta.computedAt || at));
+    etaMs = Math.max(0, etaMs - age);
+    etaLabel = etaMs === 0 && eta.progress.current >= eta.progress.total
+      ? 'finishing…'
+      : formatEtaRemaining(etaMs);
+  }
+  return {
+    progress: eta.progress || null,
+    etaMs: etaMs == null ? null : etaMs,
+    etaLabel: etaLabel || null,
+    paceLabel: eta.paceLabel || null,
+    computedAt: at,
+  };
+}
+
 function jobSnapshot() {
   if (!currentJob) {
     return null;
@@ -359,6 +396,7 @@ function jobSnapshot() {
     elapsedMs: Date.now() - new Date(currentJob.startedAt).getTime(),
     statusLine: currentJob.statusLine,
     state: currentJob.state,
+    eta: etaSnapshot(currentJob),
     running: true,
   };
 }
@@ -413,15 +451,18 @@ function startJob({ name, label, detail, args, password }) {
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
+  const startedAt = new Date().toISOString();
   const job = {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     name,
     label: label || name,
     detail: detail || '',
-    startedAt: new Date().toISOString(),
+    startedAt,
     statusLine: 'Starting process…',
     state: 'running',
     log: [],
+    etaTracker: createJobEtaTracker({ startedAt: Date.parse(startedAt) }),
+    eta: null,
     child,
   };
   currentJob = job;

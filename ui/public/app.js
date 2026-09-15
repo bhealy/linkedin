@@ -834,13 +834,17 @@ function setInboxScanRunning(running, kind = 'scan') {
         : 'Cache conversation list';
   hint.hidden = !running;
   if (running && kind === 'cache') {
-    hint.textContent =
-      latestStatus && latestStatus.inboxCacheResumable
+    const eta = latestStatus && latestStatus.job ? jobEtaMeta(latestStatus.job) : '';
+    hint.textContent = eta
+      ? `Caching conversations — ${eta}. Use Stop / pause for now to keep progress.`
+      : latestStatus && latestStatus.inboxCacheResumable
         ? 'Resuming from the last saved inbox page. Use Stop / pause for now to keep progress.'
         : 'Paging through the inbox list. Use Stop / pause for now to keep progress.';
   } else if (running) {
-    hint.textContent =
-      'Checking the latest messages, then opening only conversations that still need a read.';
+    const eta = latestStatus && latestStatus.job ? jobEtaMeta(latestStatus.job) : '';
+    hint.textContent = eta
+      ? `Reading conversations that need a check — ${eta}.`
+      : 'Checking the latest messages, then opening only conversations that still need a read.';
   }
 }
 
@@ -851,6 +855,81 @@ function formatDuration(ms) {
   }
   const minutes = Math.floor(seconds / 60);
   return `${minutes}m ${seconds % 60}s`;
+}
+
+function formatEtaRemaining(ms) {
+  const seconds = Math.max(0, Math.round((Number(ms) || 0) / 1000));
+  if (seconds < 45) {
+    return 'less than a minute remaining';
+  }
+  if (seconds < 90) {
+    return 'about 1 minute remaining';
+  }
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) {
+    return `about ${minutes}m remaining`;
+  }
+  const hours = Math.floor(minutes / 60);
+  const remMinutes = minutes % 60;
+  if (hours < 48) {
+    return remMinutes === 0
+      ? `about ${hours}h remaining`
+      : `about ${hours}h ${remMinutes}m remaining`;
+  }
+  const days = Math.floor(hours / 24);
+  const remHours = hours % 24;
+  return remHours === 0
+    ? `about ${days}d remaining`
+    : `about ${days}d ${remHours}h remaining`;
+}
+
+function liveJobEta(job, at = Date.now()) {
+  if (!job || !job.eta) {
+    return null;
+  }
+  const eta = job.eta;
+  const progress = eta.progress || null;
+  if (eta.etaMs != null && progress && progress.total != null) {
+    const age = Math.max(0, at - (eta.computedAt || at));
+    const etaMs = Math.max(0, eta.etaMs - age);
+    const etaLabel =
+      etaMs === 0 && progress.current >= progress.total
+        ? 'finishing…'
+        : formatEtaRemaining(etaMs);
+    return { progress, etaMs, etaLabel };
+  }
+  if (eta.etaLabel) {
+    return { progress, etaMs: eta.etaMs, etaLabel: eta.etaLabel };
+  }
+  return progress ? { progress, etaMs: null, etaLabel: null } : null;
+}
+
+function formatProgressCounts(progress) {
+  if (!progress || progress.current == null) {
+    return '';
+  }
+  if (progress.total == null) {
+    return `${Number(progress.current).toLocaleString()} listed`;
+  }
+  return `${Number(progress.current).toLocaleString()}/${Number(
+    progress.total
+  ).toLocaleString()}`;
+}
+
+function jobEtaMeta(job) {
+  const live = liveJobEta(job);
+  if (!live) {
+    return '';
+  }
+  const parts = [];
+  const counts = formatProgressCounts(live.progress);
+  if (counts) {
+    parts.push(counts);
+  }
+  if (live.etaLabel) {
+    parts.push(live.etaLabel);
+  }
+  return parts.join(' · ');
 }
 
 function formatTime(value) {
@@ -875,11 +954,17 @@ function textElement(tag, className, text) {
 
 function jobBodyFragment(job) {
   const elapsed = Date.now() - new Date(job.startedAt).getTime();
+  const etaMeta = jobEtaMeta(job);
   const wrap = document.createDocumentFragment();
   wrap.append(
     textElement('div', 'job-name', job.label || job.name),
     textElement('p', 'job-detail', job.detail || ''),
-    textElement('p', 'job-stage', job.statusLine || 'Starting…'),
+    textElement('p', 'job-stage', job.statusLine || 'Starting…')
+  );
+  if (etaMeta) {
+    wrap.append(textElement('p', 'job-eta', etaMeta));
+  }
+  wrap.append(
     textElement(
       'p',
       'job-meta',
@@ -1227,7 +1312,10 @@ function renderJourney(status) {
   heroStatus.classList.toggle('running', busy);
   if (busy) {
     journeyStatus.textContent = status.job.label || status.job.name;
-    journeyDetail.textContent = status.job.statusLine || 'Starting…';
+    const eta = jobEtaMeta(status.job);
+    journeyDetail.textContent = eta
+      ? `${status.job.statusLine || 'Starting…'} · ${eta}`
+      : status.job.statusLine || 'Starting…';
   } else if (!hasEmail) {
     journeyStatus.textContent = 'Ready when you are';
     journeyDetail.textContent = 'Begin with your login details';

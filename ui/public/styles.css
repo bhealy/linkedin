@@ -262,9 +262,10 @@ button.busy::before { content: ""; position: absolute; left: 14px; width: 11px; 
 .status-pill.failed, .status-pill.cancelled { color: var(--danger); border-color: rgba(255,112,123,.35); }
 .current-job { margin: 16px 0; min-height: 40px; }
 .job-name { font-weight: 600; }
-.job-detail, .job-stage, .job-meta, .empty-state { color: var(--muted); font-size: .76rem; }
-.job-detail, .job-stage, .job-meta { margin: 4px 0 0; }
+.job-detail, .job-stage, .job-meta, .job-eta, .empty-state { color: var(--muted); font-size: .76rem; }
+.job-detail, .job-stage, .job-meta, .job-eta { margin: 4px 0 0; }
 .job-stage { color: var(--text); font-family: var(--mono); overflow-wrap: anywhere; }
+.job-eta { color: var(--accent); font-variant-numeric: tabular-nums; }
 .jobs-card h3 { margin: 18px 0 8px; color: var(--quiet); text-transform: uppercase; letter-spacing: .1em; font-size: .66rem; }
 .job-history { list-style: none; padding: 0; margin: 0; }
 .job-history li { display: grid; grid-template-columns: minmax(150px,1fr) auto; gap: 4px 16px; padding: 10px 0; border-top: 1px solid var(--border); }
