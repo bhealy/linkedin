@@ -247,7 +247,7 @@ npm run connections:remove -- --execute --csv unrequited-love.csv --limit 20</pr
 
           <article id="dive-remove">
             <h3>7. Bulk remove</h3>
-            <p>Omit <code>--execute</code> to print who would be removed. Removals are permanent on LinkedIn. When the source is an inbox CSV such as <code>unrequited-love.csv</code>, a safe list is on by default and protects founders, C-suite leaders, investors, board members and selected owner/partner roles. Add protected phrases with <code>--safe-keywords</code>, or deliberately disable this protection with <code>--no-unrequited-safe-list</code>. The dry run reports protected and would-remove counts. Default ignored company names in headlines: Manna and Meili (add more with <code>--ignore-company</code>). Spacing is about 1.2 seconds between removals. Removed vanity names are remembered and marked in both the source inbox CSV and master <code>connections.csv</code>, so later runs skip them.</p>
+            <p>Omit <code>--execute</code> to print who would be removed. Removals are permanent on LinkedIn. Use <strong>Review &amp; protect contacts</strong> to browse or search the full selected source CSV and protect individual contacts; that choice is stored in the CSV’s <code>protected</code> column and all removal runs skip those rows. When the source is an inbox CSV such as <code>unrequited-love.csv</code>, only people who sent more than one unanswered message are included by default. Pass <code>--include-single-message</code> to also remove people who sent a single unanswered message. A safe list is on by default and protects founders, C-suite leaders, investors, board members and selected owner/partner roles. Add protected phrases with <code>--safe-keywords</code>, or deliberately disable this protection with <code>--no-unrequited-safe-list</code>. The dry run reports protected and would-remove counts. Default ignored company names in headlines: Manna and Meili (add more with <code>--ignore-company</code>). Spacing is about 1.2 seconds between removals. Removed vanity names are remembered and marked in both the source inbox CSV and master <code>connections.csv</code>, so later runs skip them.</p>
             <div class="code-block">
               <button type="button" class="copy-btn" aria-label="Copy code">Copy</button>
               <pre>npm run connections:remove -- --status spam --limit 20
@@ -266,6 +266,7 @@ npm run connections:remove -- --execute --status sales --limit 50</pre>
                 <tr><td><code>--ignore-company</code></td><td>Skip headlines that mention this company (repeatable)</td></tr>
                 <tr><td><code>--safe-keywords</code></td><td>Add comma-separated protected title words or phrases for inbox CSV removals</td></tr>
                 <tr><td><code>--no-unrequited-safe-list</code></td><td>Turn off the default protected-title list for inbox CSV removals</td></tr>
+                <tr><td><code>--include-single-message</code></td><td>Also remove unrequited connections who sent only one unanswered message (default is 2+)</td></tr>
                 <tr><td><code>--csv</code></td><td>Different input CSV</td></tr>
                 <tr><td><code>--fresh</code></td><td>Clear removal history</td></tr>
               </tbody>

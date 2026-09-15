@@ -133,6 +133,7 @@ input:focus, select:focus, textarea:focus { border-color: rgba(75,181,247,.6); b
 textarea { resize: vertical; min-height: 68px; }
 .hint { color: var(--quiet); font-weight: 400; }
 .check { display: flex; gap: 9px; align-items: center; }
+.unrequited-remove-option[hidden] { display: none !important; }
 .check input { width: auto; margin: 0; accent-color: var(--accent-2); }
 .job-hint { margin: 0 0 15px; color: var(--accent); font-size: .79rem; }
 .action-row, .row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
@@ -292,6 +293,20 @@ pre { max-height: 360px; overflow: auto; padding: 14px; color: #b7c3d3; backgrou
 .stat-list div { display: grid; gap: 2px; }
 .stat-list dt { color: var(--muted); font-size: .73rem; }
 .stat-list dd { margin: 0; overflow-wrap: anywhere; }
+.source-panel { width: min(1050px,100%); max-height: calc(100vh - 48px); display: flex; flex-direction: column; }
+.source-search { margin: 20px 0 12px; }
+.source-list-status { min-height: 22px; margin-bottom: 8px; color: var(--muted); font-size: .75rem; }
+.source-table-wrap { min-height: 240px; overflow: auto; border: 1px solid var(--border); border-radius: 12px; }
+.source-table { width: 100%; border-collapse: collapse; font-size: .75rem; }
+.source-table th { position: sticky; top: 0; z-index: 1; padding: 11px; color: var(--quiet); background: #111927; text-align: left; }
+.source-table td { padding: 10px 11px; border-top: 1px solid var(--border); vertical-align: middle; }
+.source-table td:first-child, .source-table th:first-child { width: 72px; text-align: center; }
+.source-table input[type="checkbox"] { display: inline-block; width: auto; margin: 0; accent-color: var(--accent-2); }
+.source-table a { color: var(--accent); }
+.source-contact-name { font-weight: 600; }
+.source-empty { padding: 35px !important; color: var(--muted); text-align: center !important; }
+.source-pagination { display: flex; justify-content: center; align-items: center; gap: 12px; margin-top: 14px; }
+.source-pagination span { min-width: 120px; color: var(--muted); font-size: .75rem; text-align: center; }
 
 @media (max-width: 940px) {
   .hero { grid-template-columns: 1fr; gap: 24px; }

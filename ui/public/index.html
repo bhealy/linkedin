@@ -277,11 +277,12 @@
               <label>Source CSV<select id="csv-source" data-tooltip="Choose the source list. Unrequited removals only touch candidate rows."><option value="connections">connections.csv</option><option value="sales">sales-connections.csv</option><option value="unrequited">unrequited-love.csv</option></select></label>
               <label>Status<select id="status" data-tooltip="Filter candidates by classification. Blank includes every row."><option value="">(all rows)</option><option value="spam">spam (sales + recruitment)</option><option value="sales">sales</option><option value="recruitment">recruitment</option><option value="sales_and_recruitment">sales_and_recruitment</option><option value="not_target">not_target</option></select></label>
               <label class="wide">Title keywords <span class="hint">(optional, match any)</span><textarea id="rm-keywords" rows="2" placeholder="recruiter, sales director, business development" data-tooltip="Enter words or phrases separated by commas or new lines."></textarea></label>
-              <label class="check wide" data-tooltip="When removing from unrequited-love.csv, skip founders, C-suite leaders, investors, board members and other protected titles. This is on by default."><input id="rm-protect-unrequited" type="checkbox" checked> Protect founder / CEO / investor titles</label>
-              <label class="wide">Extra protected title keywords <span class="hint">(optional)</span><textarea id="rm-safe-keywords" rows="2" placeholder="advisor, ambassador" data-tooltip="Add words or phrases to the default unrequited-love safe list, separated by commas or new lines. Matching uses whole words or phrases, ignoring case."></textarea></label>
+              <label class="check wide unrequited-remove-option" hidden data-tooltip="When removing from unrequited-love.csv, skip founders, C-suite leaders, investors, board members and other protected titles. This is on by default."><input id="rm-protect-unrequited" type="checkbox" checked> Protect founder / CEO / investor titles</label>
+              <label class="check wide unrequited-remove-option" hidden data-tooltip="By default, unrequited removals only include people who sent more than one message with no reply. Tick this to also remove people who sent a single unanswered message."><input id="rm-include-single-message" type="checkbox"> Include people who sent only one message</label>
+              <label class="wide unrequited-remove-option" hidden>Extra protected title keywords <span class="hint">(optional)</span><textarea id="rm-safe-keywords" rows="2" placeholder="advisor, ambassador" data-tooltip="Add words or phrases to the default unrequited-love safe list, separated by commas or new lines. Matching uses whole words or phrases, ignoring case."></textarea></label>
               <label>Limit<input id="rm-limit" type="number" min="1" value="20" data-tooltip="Maximum candidates to preview or remove. Start small."></label>
             </div>
-            <div class="action-row"><button type="button" id="start-dry" data-tooltip="List exactly who matches without changing anything.">Preview dry run</button><button type="button" id="start-execute" class="danger" data-tooltip="Permanently disconnect matching people after confirmation.">Execute removals</button><a class="card-help" href="/docs/readme.html#dive-remove" target="_blank" rel="noopener">Safety guide</a></div>
+            <div class="action-row"><button type="button" id="review-source" data-tooltip="Review everyone in the selected CSV and protect individual contacts from removal.">Review & protect contacts</button><button type="button" id="start-dry" data-tooltip="List exactly who matches without changing anything.">Preview dry run</button><button type="button" id="start-execute" class="danger" data-tooltip="Permanently disconnect matching people after confirmation.">Execute removals</button><a class="card-help" href="/docs/readme.html#dive-remove" target="_blank" rel="noopener">Safety guide</a></div>
           </div>
         </section>
       </div>
@@ -352,6 +353,34 @@
       <div class="row modal-actions">
         <button type="button" id="success-close" class="primary">Close</button>
         <button type="button" id="success-review" data-tooltip="Open the Analytics tab and filter the conversation explorer to unrequited candidates." hidden>Review candidates</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="source-modal" class="modal" hidden>
+    <div class="modal-backdrop" id="source-backdrop"></div>
+    <div class="modal-panel source-panel" role="dialog" aria-modal="true" aria-labelledby="source-modal-title">
+      <div class="jobs-head">
+        <div>
+          <h2 id="source-modal-title">Review & protect contacts</h2>
+          <p id="source-modal-detail">Protected contacts remain in the CSV but can never be disconnected.</p>
+        </div>
+        <button type="button" id="source-close" aria-label="Close contact list">Close</button>
+      </div>
+      <label class="source-search">Search this source CSV
+        <input type="search" id="source-search" placeholder="Name, title, or profile">
+      </label>
+      <div id="source-list-status" class="source-list-status" aria-live="polite"></div>
+      <div class="source-table-wrap">
+        <table class="source-table">
+          <thead><tr><th>Protect</th><th>Contact</th><th>Title</th><th>Profile</th></tr></thead>
+          <tbody id="source-list"></tbody>
+        </table>
+      </div>
+      <div class="source-pagination">
+        <button type="button" id="source-prev">Previous</button>
+        <span id="source-page"></span>
+        <button type="button" id="source-next">Next</button>
       </div>
     </div>
   </div>

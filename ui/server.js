@@ -17,6 +17,10 @@ const {
   computeConnectionsAnalytics,
   filterConnectionsByConnectedOn,
 } = require('../lib/connections-analytics');
+const {
+  listSourceContacts,
+  setSourceContactProtected,
+} = require('../lib/source-protection');
 
 const ROOT = path.join(__dirname, '..');
 const HOST = '127.0.0.1';
@@ -26,6 +30,11 @@ const CONNECTIONS_CSV = path.join(ROOT, 'connections.csv');
 const SALES_CSV = path.join(ROOT, 'sales-connections.csv');
 const UNREQUITED_CSV = path.join(ROOT, 'unrequited-love.csv');
 const ANALYTICS_HTML = path.join(ROOT, 'connections-analytics.html');
+const REMOVAL_SOURCE_FILES = {
+  connections: CONNECTIONS_CSV,
+  sales: SALES_CSV,
+  unrequited: UNREQUITED_CSV,
+};
 
 const MAX_LOG_LINES = 4000;
 const MAX_JOB_HISTORY = 10;
@@ -295,12 +304,30 @@ function summariseJobOutput(job) {
     const loaded = pickLog(log, /Loaded ([0-9,]+) pending target/i);
     const removed = pickLog(log, /Removed ([0-9,/]+) connections/i);
     const keywords = pickLog(log, /Title keywords \(match any\):\s+(.+)/i);
+    const sourceProtected = pickLog(log, /Protected in source CSV:\s+([0-9,]+)/i);
     const protectedCount = pickLog(log, /Protected by safe list:\s+([0-9,]+)/i);
     const wouldRemove = pickLog(log, /Would remove:\s+([0-9,]+)/i);
     if (loaded) summary.rows.push({ label: 'Pending targets', value: loaded[1] });
     if (keywords) summary.rows.push({ label: 'Keywords', value: keywords[1].trim() });
+    if (sourceProtected) {
+      summary.rows.push({ label: 'Protected in CSV', value: sourceProtected[1] });
+    }
     if (protectedCount) {
       summary.rows.push({ label: 'Protected by safe list', value: protectedCount[1] });
+    }
+    const oneMessage = pickLog(
+      log,
+      /Skipped ([0-9,]+) connection\(s\) with only one inbound message/i
+    );
+    if (oneMessage) {
+      summary.rows.push({
+        label: 'One-message threads',
+        value: `${oneMessage[1]} skipped (default is 2+ inbound)`,
+      });
+    }
+    const inboundFilter = pickLog(log, /Unrequited inbound filter:\s+(.+)/i);
+    if (inboundFilter && !oneMessage) {
+      summary.rows.push({ label: 'Inbound filter', value: inboundFilter[1].trim() });
     }
     if (wouldRemove) summary.rows.push({ label: 'Would remove', value: wouldRemove[1] });
     if (removed) summary.rows.push({ label: 'Removed', value: removed[1] });
@@ -464,6 +491,49 @@ app.use('/docs', express.static(path.join(ROOT, 'docs')));
 
 app.get('/api/status', (_req, res) => {
   res.json(statusPayload());
+});
+
+app.get('/api/removal-source', (req, res) => {
+  try {
+    const source = String(req.query.source || '');
+    const filePath = REMOVAL_SOURCE_FILES[source];
+    if (!filePath) {
+      throw new Error('Choose a valid source CSV.');
+    }
+    res.json(
+      listSourceContacts(filePath, {
+        query: req.query.q,
+        page: req.query.page,
+        pageSize: req.query.pageSize,
+      })
+    );
+  } catch (err) {
+    console.error(err.stack || err.message);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/removal-source/protection', (req, res) => {
+  try {
+    if (currentJob) {
+      throw new Error('Wait for the running job to finish before changing protection.');
+    }
+    const body = req.body || {};
+    const filePath = REMOVAL_SOURCE_FILES[String(body.source || '')];
+    if (!filePath) {
+      throw new Error('Choose a valid source CSV.');
+    }
+    if (!body.key) {
+      throw new Error('Choose a contact to protect.');
+    }
+    res.json({
+      ok: true,
+      contact: setSourceContactProtected(filePath, body.key, body.protected === true),
+    });
+  } catch (err) {
+    console.error(err.stack || err.message);
+    res.status(400).json({ error: err.message });
+  }
 });
 
 app.get('/api/inbox/conversations', (req, res) => {
@@ -653,12 +723,7 @@ app.post('/api/jobs/remove', (req, res) => {
       throw new Error('Set confirm: true to execute removals.');
     }
     const args = [path.join(ROOT, 'remove-connections.js')];
-    const csvFiles = {
-      connections: CONNECTIONS_CSV,
-      sales: SALES_CSV,
-      unrequited: UNREQUITED_CSV,
-    };
-    const csvChoice = csvFiles[body.csv] || CONNECTIONS_CSV;
+    const csvChoice = REMOVAL_SOURCE_FILES[body.csv] || CONNECTIONS_CSV;
     args.push('--csv', csvChoice);
     if (body.execute) {
       args.push('--execute');
@@ -671,9 +736,13 @@ app.post('/api/jobs/remove', (req, res) => {
       args.push('--keywords', keywords.join(','));
     }
     const protectUnrequited = body.protectUnrequited !== false;
+    const includeSingleMessage = body.includeSingleMessage === true;
     const safeKeywords = normalizeKeywords(body.safeKeywords);
     if (!protectUnrequited) {
       args.push('--no-unrequited-safe-list');
+    }
+    if (includeSingleMessage) {
+      args.push('--include-single-message');
     }
     if (safeKeywords.length) {
       args.push('--safe-keywords', safeKeywords.join(','));
@@ -691,6 +760,11 @@ app.post('/api/jobs/remove', (req, res) => {
         keywords.length ? `title: ${keywords.join(' OR ')}` : null,
         csvChoice === UNREQUITED_CSV
           ? `safe list ${protectUnrequited ? 'on' : 'off'}`
+          : null,
+        csvChoice === UNREQUITED_CSV
+          ? includeSingleMessage
+            ? 'including one-message threads'
+            : '2+ inbound messages'
           : null,
         csvChoice === UNREQUITED_CSV && safeKeywords.length
           ? `extra protected: ${safeKeywords.join(' OR ')}`

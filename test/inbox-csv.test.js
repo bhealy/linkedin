@@ -54,9 +54,11 @@ upsertListedConversation(rows, {
   connection: {
     profileUrl: 'https://www.linkedin.com/in/bea/',
     vanityName: 'bea',
+    protected: true,
   },
 });
 assert.strictEqual(rows[0].status, 'listed');
+assert.strictEqual(rows[0].protected, true);
 assert.strictEqual(needsExamineWithParser(rows[0], cutoff, parseActivity), true);
 assert.strictEqual(isUnrequitedCandidate(rows[0]), false);
 
@@ -80,6 +82,7 @@ writeInboxCsv(rows, file);
 const roundTrip = loadInboxCsv(file);
 assert.strictEqual(roundTrip[0].threadId, 't1');
 assert.strictEqual(roundTrip[0].status, 'replied');
+assert.strictEqual(roundTrip[0].protected, true);
 assert.strictEqual(findInboxRow(roundTrip, { threadId: 't1', name: 'Bea' }).name, 'Bea');
 
 assert.strictEqual(

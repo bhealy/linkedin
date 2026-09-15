@@ -7,6 +7,13 @@ let latestStatus = null;
 let intelligenceCacheCount = null;
 let connectionsCacheCount = null;
 let workspaceTab = 'activity';
+const sourceReview = {
+  page: 1,
+  pages: 1,
+  query: '',
+  source: 'connections',
+  timer: null,
+};
 
 function showWorkspaceTab(name, options = {}) {
   const selected = name === 'analytics' ? 'analytics' : 'activity';
@@ -127,6 +134,7 @@ document.addEventListener('focusout', (event) => {
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') {
     hideTooltip();
+    document.getElementById('source-modal').hidden = true;
   }
 });
 
@@ -1142,6 +1150,13 @@ function selectedSourceAvailable(status) {
   return Number(status.connectionsCount) > 0;
 }
 
+function syncUnrequitedRemoveOptions() {
+  const unrequited = document.getElementById('csv-source').value === 'unrequited';
+  document.querySelectorAll('.unrequited-remove-option').forEach((el) => {
+    el.hidden = !unrequited;
+  });
+}
+
 function renderJourney(status) {
   const busy = Boolean(status.job);
   const hasEmail = Boolean(status.email);
@@ -1186,9 +1201,11 @@ function renderJourney(status) {
   const sourceAvailable = selectedSourceAvailable(status);
   document.getElementById('start-dry').disabled = busy || !sourceAvailable;
   document.getElementById('start-execute').disabled = busy || !sourceAvailable || !hasDryRun;
+  document.getElementById('review-source').disabled = busy || !sourceAvailable;
   document.getElementById('start-execute').title = hasDryRun
     ? ''
     : 'Complete a successful dry run first.';
+  syncUnrequitedRemoveOptions();
 
   setReviewFileState('open-connections', hasConnections);
   setReviewFileState('open-sales', Number(status.salesCount) > 0);
@@ -1395,10 +1412,140 @@ function removePayload(execute) {
     status: document.getElementById('status').value,
     keywords: document.getElementById('rm-keywords').value,
     protectUnrequited: document.getElementById('rm-protect-unrequited').checked,
+    includeSingleMessage:
+      document.getElementById('csv-source').value === 'unrequited' &&
+      document.getElementById('rm-include-single-message').checked,
     safeKeywords: document.getElementById('rm-safe-keywords').value,
     limit: document.getElementById('rm-limit').value,
   };
 }
+
+function sourceContactRow(contact) {
+  const row = document.createElement('tr');
+  const protectCell = document.createElement('td');
+  const checkbox = document.createElement('input');
+  checkbox.type = 'checkbox';
+  checkbox.checked = Boolean(contact.protected);
+  checkbox.setAttribute(
+    'aria-label',
+    `${checkbox.checked ? 'Unprotect' : 'Protect'} ${contact.name || contact.vanityName || 'contact'}`
+  );
+  checkbox.addEventListener('change', async () => {
+    const next = checkbox.checked;
+    checkbox.disabled = true;
+    try {
+      await postJson('/api/removal-source/protection', {
+        source: sourceReview.source,
+        key: contact.key,
+        protected: next,
+      });
+      contact.protected = next;
+      checkbox.setAttribute(
+        'aria-label',
+        `${next ? 'Unprotect' : 'Protect'} ${contact.name || contact.vanityName || 'contact'}`
+      );
+    } catch (err) {
+      checkbox.checked = !next;
+      document.getElementById('source-list-status').textContent = err.stack || err.message;
+    } finally {
+      checkbox.disabled = false;
+    }
+  });
+  protectCell.append(checkbox);
+
+  const nameCell = document.createElement('td');
+  nameCell.append(textElement('span', 'source-contact-name', contact.name || contact.vanityName || '—'));
+  const titleCell = textElement('td', '', contact.title || '—');
+  const profileCell = document.createElement('td');
+  if (contact.profileUrl) {
+    const link = document.createElement('a');
+    link.href = contact.profileUrl;
+    link.target = '_blank';
+    link.rel = 'noopener';
+    link.textContent = contact.vanityName || 'Open profile';
+    profileCell.append(link);
+  } else {
+    profileCell.textContent = contact.vanityName || '—';
+  }
+  row.append(protectCell, nameCell, titleCell, profileCell);
+  return row;
+}
+
+async function loadSourceContacts() {
+  const list = document.getElementById('source-list');
+  const status = document.getElementById('source-list-status');
+  status.textContent = 'Loading contacts…';
+  const params = new URLSearchParams({
+    source: sourceReview.source,
+    page: String(sourceReview.page),
+    pageSize: '100',
+  });
+  if (sourceReview.query) {
+    params.set('q', sourceReview.query);
+  }
+  try {
+    const response = await fetch(`/api/removal-source?${params}`);
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data.error || `Request failed (${response.status})`);
+    }
+    sourceReview.page = data.page;
+    sourceReview.pages = data.pages;
+    list.replaceChildren();
+    if (!data.contacts.length) {
+      const row = document.createElement('tr');
+      const cell = textElement('td', 'source-empty', 'No matching contacts.');
+      cell.colSpan = 4;
+      row.append(cell);
+      list.append(row);
+    } else {
+      list.append(...data.contacts.map(sourceContactRow));
+    }
+    status.textContent = `${Number(data.filtered).toLocaleString()} matching contacts from ${Number(data.total).toLocaleString()} total`;
+    document.getElementById('source-page').textContent =
+      `Page ${data.page.toLocaleString()} of ${data.pages.toLocaleString()}`;
+    document.getElementById('source-prev').disabled = data.page <= 1;
+    document.getElementById('source-next').disabled = data.page >= data.pages;
+  } catch (err) {
+    list.replaceChildren();
+    status.textContent = err.stack || err.message;
+  }
+}
+
+function closeSourceModal() {
+  document.getElementById('source-modal').hidden = true;
+}
+
+document.getElementById('review-source').addEventListener('click', () => {
+  sourceReview.source = document.getElementById('csv-source').value;
+  sourceReview.page = 1;
+  sourceReview.query = '';
+  document.getElementById('source-search').value = '';
+  document.getElementById('source-modal-detail').textContent =
+    `${sourceReview.source === 'unrequited' ? 'unrequited-love' : sourceReview.source}.csv · Protected contacts remain in the CSV but can never be disconnected.`;
+  document.getElementById('source-modal').hidden = false;
+  loadSourceContacts();
+  document.getElementById('source-search').focus();
+});
+
+document.getElementById('source-close').addEventListener('click', closeSourceModal);
+document.getElementById('source-backdrop').addEventListener('click', closeSourceModal);
+document.getElementById('source-prev').addEventListener('click', () => {
+  sourceReview.page = Math.max(1, sourceReview.page - 1);
+  loadSourceContacts();
+});
+document.getElementById('source-next').addEventListener('click', () => {
+  sourceReview.page = Math.min(sourceReview.pages, sourceReview.page + 1);
+  loadSourceContacts();
+});
+document.getElementById('source-search').addEventListener('input', (event) => {
+  clearTimeout(sourceReview.timer);
+  sourceReview.timer = setTimeout(() => {
+    sourceReview.query = event.target.value.trim();
+    sourceReview.page = 1;
+    loadSourceContacts();
+  }, 250);
+});
 
 document.getElementById('start-dry').addEventListener('click', async () => {
   scrollJobsIntoView();

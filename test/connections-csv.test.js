@@ -25,6 +25,7 @@ writeConnectionsCsv(
       connectedOn: 'January 1, 2020',
       disconnected: false,
       disconnectedOn: '',
+      protected: true,
     },
   ],
   file
@@ -34,6 +35,7 @@ const roundTrip = loadConnectionsCsv(file);
 assert.strictEqual(roundTrip.length, 1);
 assert.strictEqual(roundTrip[0].vanityName, 'ada');
 assert.strictEqual(isDisconnected(roundTrip[0]), false);
+assert.strictEqual(roundTrip[0].protected, true);
 
 assert.strictEqual(markDisconnected(roundTrip, { vanityName: 'ada', disconnectedOn: '2026-09-02T10:00:00.000Z' }), 'updated');
 assert.strictEqual(markDisconnected(roundTrip, { vanityName: 'ada' }), 'already');
@@ -62,6 +64,7 @@ const merged = mergeConnections(afterMark, [
   },
 ]);
 assert.strictEqual(isDisconnected(merged.find((row) => row.vanityName === 'ada')), false);
+assert.strictEqual(merged.find((row) => row.vanityName === 'ada').protected, true);
 assert.strictEqual(isDisconnected(merged.find((row) => row.vanityName === 'bob')), true);
 
 assert.strictEqual(

@@ -92,6 +92,7 @@ function parseArgs(argv) {
     match: null,
     keywords: [],
     protectUnrequited: true,
+    includeSingleMessage: false,
     safeKeywords: [],
     ignoreCompanies: parseIgnoreCompanies(argv),
   };
@@ -138,6 +139,10 @@ function parseArgs(argv) {
     }
     if (arg === '--no-unrequited-safe-list') {
       args.protectUnrequited = false;
+      continue;
+    }
+    if (arg === '--include-single-message') {
+      args.includeSingleMessage = true;
       continue;
     }
     if (arg === '--safe-keywords' && argv[i + 1]) {
@@ -346,6 +351,30 @@ function filterProtectedTitles(targets, keywords) {
   return { pending, protectedTargets };
 }
 
+function inboundCount(value) {
+  const count = Number(value);
+  return Number.isFinite(count) ? count : 0;
+}
+
+function applyUnrequitedInboundFilter(targets, inboxSource, args) {
+  if (!inboxSource) {
+    return { pending: targets, skipped: [] };
+  }
+  if (args.includeSingleMessage) {
+    return { pending: targets, skipped: [] };
+  }
+  const pending = [];
+  const skipped = [];
+  for (const target of targets) {
+    if (inboundCount(target.inbound) > 1) {
+      pending.push(target);
+    } else {
+      skipped.push(target);
+    }
+  }
+  return { pending, skipped };
+}
+
 function applyUnrequitedSafeList(targets, inboxSource, args) {
   const keywords = [
     ...DEFAULT_PROTECTED_TITLE_KEYWORDS,
@@ -358,6 +387,19 @@ function applyUnrequitedSafeList(targets, inboxSource, args) {
     ...filterProtectedTitles(targets, keywords),
     keywords,
   };
+}
+
+function applyExplicitProtection(targets) {
+  const protectedTargets = [];
+  const pending = [];
+  for (const target of targets) {
+    if (target.protected) {
+      protectedTargets.push(target);
+    } else {
+      pending.push(target);
+    }
+  }
+  return { pending, protectedTargets };
 }
 
 function formatTargetLabel(target) {
@@ -414,6 +456,8 @@ function loadTargetsFromCsv(csvPath, args, inboxRows = null) {
         connectedOn: row.connectedOn || '',
         disconnected: row.disconnected,
         disconnectedOn: row.disconnectedOn || '',
+        protected: Boolean(row.protected),
+        inbound: inboundCount(row.inbound),
       }));
     const deduped = [];
     const seen = new Set();
@@ -435,7 +479,8 @@ function loadTargetsFromCsv(csvPath, args, inboxRows = null) {
       continue;
     }
 
-    const [name, title, profileUrl, status] = parseCsvRow(line);
+    const fields = parseCsvRow(line);
+    const [name, title, profileUrl, status] = fields;
     if (!profileUrl) {
       continue;
     }
@@ -465,6 +510,9 @@ function loadTargetsFromCsv(csvPath, args, inboxRows = null) {
       connectedOn: '',
       disconnected: false,
       disconnectedOn: '',
+      protected:
+        header.includes('protected') &&
+        /^(?:yes|true|protected|1)$/i.test(fields[header.indexOf('protected')] || ''),
     });
   }
 
@@ -604,7 +652,17 @@ async function main() {
 
   const inboxRows = isInboxCsv(args.csv) ? loadInboxCsv(args.csv) : null;
   const allTargets = loadTargetsFromCsv(args.csv, args, inboxRows);
-  const protectedResult = applyUnrequitedSafeList(allTargets, inboxRows, args);
+  const explicitProtection = applyExplicitProtection(allTargets);
+  const inboundResult = applyUnrequitedInboundFilter(
+    explicitProtection.pending,
+    inboxRows,
+    args
+  );
+  const protectedResult = applyUnrequitedSafeList(
+    inboundResult.pending,
+    inboxRows,
+    args
+  );
   const { pending: companyFiltered, skipped: ignoredByCompany } = filterIgnoredCompanies(
     protectedResult.pending,
     args.ignoreCompanies
@@ -622,8 +680,23 @@ async function main() {
       `Skipping ${ignoredByCompany} connection(s) at ignored companies (${args.ignoreCompanies.join(', ')}).`
     );
   }
+  if (explicitProtection.protectedTargets.length) {
+    console.log(
+      `Protected in source CSV: ${explicitProtection.protectedTargets.length} connection(s).`
+    );
+  }
 
   if (inboxRows) {
+    console.log(
+      args.includeSingleMessage
+        ? 'Unrequited inbound filter: all unrequited (including one message).'
+        : 'Unrequited inbound filter: 2+ inbound messages, no reply.'
+    );
+    if (inboundResult.skipped.length) {
+      console.log(
+        `Skipped ${inboundResult.skipped.length} connection(s) with only one inbound message.`
+      );
+    }
     console.log(
       `Unrequited safe list: ${args.protectUnrequited ? 'on' : 'off'}${
         args.protectUnrequited
@@ -751,6 +824,8 @@ if (require.main === module) {
 }
 
 module.exports = {
+  applyExplicitProtection,
+  applyUnrequitedInboundFilter,
   applyUnrequitedSafeList,
   filterProtectedTitles,
   isInboxCsv,
