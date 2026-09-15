@@ -8,7 +8,7 @@ const {
   writeProtectedFile,
   removeProtectedFile,
 } = require('./lib/rolling-backup');
-const { browserLaunchOptions } = require('./lib/linkedin-auth');
+const { browserLaunchOptions, ensureLoggedIn } = require('./lib/linkedin-auth');
 
 const LINKEDIN_EMAIL = process.env.LINKEDIN_EMAIL;
 const SEARCH_URL_BASE = 'https://www.linkedin.com/search/results/people/';
@@ -1207,111 +1207,6 @@ async function collectSegmentedConnections(page, runtime) {
   return allConnections;
 }
 
-async function promptPassword() {
-  return new Promise((resolve) => {
-    const stdin = process.stdin;
-    const stdout = process.stdout;
-
-    stdout.write(`Password for ${LINKEDIN_EMAIL}: `);
-    stdin.setRawMode(true);
-    stdin.resume();
-    stdin.setEncoding('utf8');
-
-    let password = '';
-
-    const onData = (char) => {
-      if (char === '\n' || char === '\r' || char === '\u0004') {
-        stdin.setRawMode(false);
-        stdin.pause();
-        stdin.removeListener('data', onData);
-        stdout.write('\n');
-        resolve(password);
-        return;
-      }
-
-      if (char === '\u0003') {
-        process.exit(1);
-      }
-
-      if (char === '\u007f' || char === '\b') {
-        password = password.slice(0, -1);
-        return;
-      }
-
-      password += char;
-    };
-
-    stdin.on('data', onData);
-  });
-}
-
-async function hasLinkedInSession(page) {
-  const cookies = await page.cookies();
-  return cookies.some((cookie) => cookie.name === 'li_at');
-}
-
-async function loginToLinkedIn(page, password) {
-  await page.goto('https://www.linkedin.com/login', {
-    waitUntil: 'domcontentloaded',
-    timeout: 60000,
-  });
-
-  const usernameSelector = '#username';
-  const passwordSelector = '#password';
-
-  await page.waitForSelector(usernameSelector, { timeout: 30000 });
-  await page.click(usernameSelector, { clickCount: 3 });
-  await page.type(usernameSelector, LINKEDIN_EMAIL, { delay: 30 });
-  await page.type(passwordSelector, password, { delay: 30 });
-
-  await Promise.all([
-    page
-      .waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 60000 })
-      .catch(() => {}),
-    page.click('button[type="submit"]'),
-  ]);
-
-  if (await hasLinkedInSession(page)) {
-    return;
-  }
-
-  const currentUrl = page.url();
-  if (
-    currentUrl.includes('/checkpoint/') ||
-    currentUrl.includes('/challenge/')
-  ) {
-    console.log('LinkedIn requires additional verification (2FA/captcha).');
-    console.log('Complete it in the browser window...');
-  } else {
-    console.log('Waiting for login to complete...');
-  }
-
-  await page.waitForFunction(() => document.cookie.includes('li_at='), {
-    timeout: 300000,
-  });
-}
-
-async function ensureLoggedIn(page) {
-  await page.goto('https://www.linkedin.com/feed/', {
-    waitUntil: 'domcontentloaded',
-    timeout: 60000,
-  });
-
-  if (await hasLinkedInSession(page)) {
-    console.log('Using saved LinkedIn session.');
-    return;
-  }
-
-  const password = await promptPassword();
-  if (!password) {
-    throw new Error('Password is required.');
-  }
-
-  console.log('Logging in to LinkedIn...');
-  await loginToLinkedIn(page, password);
-  console.log('Logged in successfully.');
-}
-
 async function main() {
   if (!LINKEDIN_EMAIL) {
     console.error('Error: LINKEDIN_EMAIL environment variable is not set.');
@@ -1338,7 +1233,7 @@ async function main() {
     const page = await browser.newPage();
     page.setDefaultTimeout(60000);
 
-    await ensureLoggedIn(page);
+    await ensureLoggedIn(page, 'https://www.linkedin.com/feed/');
 
     console.log(
       `Running segmented search queue: ${runtime.queue.length} search cells`
