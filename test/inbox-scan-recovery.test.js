@@ -36,6 +36,31 @@ const timedOut = describeThreadOpenFailure(
   '2-ghi'
 );
 assert.strictEqual(timedOut.reason, 'conversation timed out');
+assert.strictEqual(timedOut.retryable, true);
+
+// waitForFunction phrases its timeout without the word "timeout", so it used
+// to fall through to the generic case and bury the conversation as skipped.
+const waitFailed = describeThreadOpenFailure(
+  new Error('Waiting failed: 20000ms exceeded'),
+  ''
+);
+assert.strictEqual(waitFailed.reason, 'conversation timed out');
+assert.strictEqual(waitFailed.retryable, true);
+
+// An unrecognised failure still means nothing was observed.
+const unknown = describeThreadOpenFailure(new Error('something else broke'), '2-xyz');
+assert.strictEqual(unknown.reason, 'conversation did not open');
+assert.strictEqual(unknown.retryable, true);
+
+// A rendered but empty thread is a real observation, so it keeps its verdict.
+assert.strictEqual(emptyRendered().retryable, undefined);
+function emptyRendered() {
+  return describeThreadOpenFailure(
+    new Error('Waiting for selector `.msg-s-event-listitem` failed'),
+    '2-empty',
+    { messagingUiRendered: true }
+  );
+}
 
 // A throttled page renders no message pane, so it must stay retryable rather
 // than being recorded as a conversation with no history.

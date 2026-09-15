@@ -369,7 +369,11 @@ async function collectConversationsFromApi(
         nextCursor: cursor,
       });
     } catch (err) {
-      console.error(err.stack || err.message);
+      // A pause closes the tab under this fetch, so only report failures that
+      // were not caused by the shutdown itself.
+      if (!pauseRequested || !isLostContext(err)) {
+        console.error(err.stack || err.message);
+      }
       if (pauseRequested) {
         stopReason = 'paused by user';
         break;
@@ -1035,13 +1039,17 @@ async function readSelfName(page) {
   return name;
 }
 
-async function resolveVanityNames(pages, rows, csvPath) {
-  const pending = rows.filter(
+function pendingVanityRows(rows) {
+  return rows.filter(
     (row) =>
       isUnrequitedCandidate(row) &&
       (!row.vanityName || isObfuscatedVanity(row.vanityName)) &&
       row.profileUrl
   );
+}
+
+async function resolveVanityNames(pages, rows, csvPath) {
+  const pending = pendingVanityRows(rows);
   if (!pending.length) {
     return 0;
   }
@@ -1055,6 +1063,7 @@ async function resolveVanityNames(pages, rows, csvPath) {
     `Resolving profile names for ${pending.length} candidate(s) across ${workers.length} tab(s)…`
   );
   let resolved = 0;
+  let attempted = 0;
 
   await runPool(pending, workers.length, async (row, _index, workerIndex) => {
     const page = workers[workerIndex];
@@ -1064,6 +1073,9 @@ async function resolveVanityNames(pages, rows, csvPath) {
     if (!claimed.allowed) {
       return;
     }
+    // Counting every attempt keeps the progress line honest about how much of
+    // this phase is left, resolved or not.
+    const at = () => `[${(attempted += 1)}/${pending.length}]`;
     try {
       await page.goto(row.profileUrl, {
         waitUntil: 'domcontentloaded',
@@ -1072,15 +1084,20 @@ async function resolveVanityNames(pages, rows, csvPath) {
       await sleep(PROFILE_PAUSE_MS);
       const vanityName = vanityFromUrl(page.url());
       if (!vanityName || isObfuscatedVanity(vanityName)) {
-        console.log(`  ${row.name}: could not resolve a profile name`);
+        console.log(`  ${at()} ${row.name}: could not resolve a profile name`);
         return;
       }
       row.vanityName = vanityName;
       row.profileUrl = `https://www.linkedin.com/in/${vanityName}/`;
       persistCsv(rows, csvPath);
       resolved += 1;
-      console.log(`  ${row.name} → ${vanityName}`);
+      console.log(`  ${at()} ${row.name} → ${vanityName}`);
     } catch (err) {
+      // Pausing tears the tab down mid-navigation, so that failure is expected
+      // rather than something worth a stack trace.
+      if (pauseRequested && isLostContext(err)) {
+        return;
+      }
       console.error(err.stack || err.message);
     }
   });
@@ -1334,6 +1351,14 @@ async function main() {
         if (opened.budgetPaused) {
           break;
         }
+        // The thread was never opened, so leave the row alone for a later run
+        // instead of recording a verdict we did not observe.
+        if (opened.retryable) {
+          console.log(
+            `${entry.name} (${entry.activityText}) — left unread: ${opened.reason}`
+          );
+          break;
+        }
         console.log(`${entry.name} (${entry.activityText}) — skipped: ${opened.reason}`);
         applyExamineOutcome(row, { status: 'skipped' }, { activityText: entry.activityText });
         persistCsv(rows, args.csv);
@@ -1360,6 +1385,11 @@ async function main() {
 
     let written = 0;
     try {
+      // The profile phase borrows the conversation tabs, so a run with nothing
+      // to read left none open and could never finish the outstanding rows.
+      if (!pauseRequested && !workers.length && pendingVanityRows(rows).length) {
+        workers = await openWorkerPages(activeBrowser, args.tabs);
+      }
       if (!pauseRequested && workers.length) {
         await resolveVanityNames(workers, rows, args.csv);
       }

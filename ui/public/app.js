@@ -1002,7 +1002,10 @@ function formatProgressCounts(progress) {
   if (progress.total == null) {
     return `${Number(progress.current).toLocaleString()} listed`;
   }
-  return `${Number(progress.current).toLocaleString()}/${Number(
+  // Naming the phase stops a finished stage (e.g. "3/3") from looking stuck
+  // while a later stage is doing the work.
+  const phase = progress.phase ? `${progress.phase} ` : '';
+  return `${phase}${Number(progress.current).toLocaleString()}/${Number(
     progress.total
   ).toLocaleString()}`;
 }
