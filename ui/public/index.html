@@ -372,11 +372,32 @@
       </label>
       <div id="source-list-status" class="source-list-status" aria-live="polite"></div>
       <div class="source-table-wrap">
-        <table class="source-table">
-          <thead><tr><th>Protect</th><th>Contact</th><th>Title</th><th>Profile</th></tr></thead>
+        <table class="source-table" id="source-table">
+          <thead>
+            <tr>
+              <th>Protect</th>
+              <th>Contact</th>
+              <th>Title</th>
+              <th class="source-msg-col">In</th>
+              <th class="source-msg-col">Out</th>
+              <th>Profile</th>
+            </tr>
+          </thead>
           <tbody id="source-list"></tbody>
         </table>
       </div>
+      <section id="source-messages" class="source-messages" hidden>
+        <div class="source-messages-head">
+          <div>
+            <h3 id="source-messages-title">Messages</h3>
+            <p id="source-messages-status"></p>
+          </div>
+          <button type="button" id="source-messages-close">Hide messages</button>
+        </div>
+        <ol id="source-messages-list"></ol>
+        <p id="source-messages-snippet" class="source-snippet" hidden></p>
+        <a id="source-messages-thread" hidden target="_blank" rel="noopener">Open thread on LinkedIn</a>
+      </section>
       <div class="source-pagination">
         <button type="button" id="source-prev">Previous</button>
         <span id="source-page"></span>

@@ -293,7 +293,7 @@ pre { max-height: 360px; overflow: auto; padding: 14px; color: #b7c3d3; backgrou
 .stat-list div { display: grid; gap: 2px; }
 .stat-list dt { color: var(--muted); font-size: .73rem; }
 .stat-list dd { margin: 0; overflow-wrap: anywhere; }
-.source-panel { width: min(1050px,100%); max-height: calc(100vh - 48px); display: flex; flex-direction: column; }
+.source-panel { width: min(1180px,100%); max-height: calc(100vh - 48px); display: flex; flex-direction: column; }
 .source-search { margin: 20px 0 12px; }
 .source-list-status { min-height: 22px; margin-bottom: 8px; color: var(--muted); font-size: .75rem; }
 .source-table-wrap { min-height: 240px; overflow: auto; border: 1px solid var(--border); border-radius: 12px; }
@@ -305,6 +305,23 @@ pre { max-height: 360px; overflow: auto; padding: 14px; color: #b7c3d3; backgrou
 .source-table a { color: var(--accent); }
 .source-contact-name { font-weight: 600; }
 .source-empty { padding: 35px !important; color: var(--muted); text-align: center !important; }
+.source-table:not(.inbox) .source-msg-col { display: none; }
+.source-count { min-width: 42px; padding: 4px 8px; color: var(--accent); background: rgba(75,181,247,.1); border: 1px solid rgba(75,181,247,.28); border-radius: 8px; font: inherit; font-variant-numeric: tabular-nums; cursor: pointer; }
+.source-count:hover, .source-count:focus-visible { background: rgba(75,181,247,.2); }
+.source-count.is-active { color: #041018; background: var(--accent); border-color: var(--accent); }
+.source-messages { margin-top: 14px; padding: 14px 16px; border: 1px solid var(--border); border-radius: 12px; background: rgba(0,0,0,.18); }
+.source-messages[hidden] { display: none; }
+.source-messages-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 10px; }
+.source-messages h3 { margin: 0 0 4px; font-size: .95rem; }
+.source-messages p { margin: 0; color: var(--muted); font-size: .75rem; }
+.source-messages ol { max-height: 220px; overflow: auto; margin: 0; padding: 0; list-style: none; }
+.source-messages li { padding: 10px 0; border-top: 1px solid var(--border); }
+.source-messages li:first-child { border-top: 0; }
+.source-msg-meta { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 4px; color: var(--quiet); font-size: .7rem; }
+.source-msg-in { color: #9ad7ff; }
+.source-msg-out { color: #ffc86b; }
+.source-snippet { margin-top: 10px !important; }
+.source-messages a { display: inline-block; margin-top: 10px; color: var(--accent); font-size: .75rem; }
 .source-pagination { display: flex; justify-content: center; align-items: center; gap: 12px; margin-top: 14px; }
 .source-pagination span { min-width: 120px; color: var(--muted); font-size: .75rem; text-align: center; }
 

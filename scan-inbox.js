@@ -41,6 +41,7 @@ const {
   rateLimitBackoffMs,
   unreadAfterLostContext,
 } = require('./lib/inbox-scan-recovery');
+const { extractThreadMessages } = require('./lib/thread-messages');
 
 const MESSAGING_URL = 'https://www.linkedin.com/messaging/';
 const OUTPUT_FILE = path.join(__dirname, 'unrequited-love.csv');
@@ -871,6 +872,7 @@ async function examineQueuedThreads(toScan, { tabs, selfName, csvPath, rows }) {
               vanityName,
               inbound: result.inbound,
               outbound: result.outbound,
+              messages: result.messages,
               activityText: entry.activityText,
               threadId: opened.threadId,
             });
@@ -958,56 +960,7 @@ async function scrollWholeThread(page) {
 }
 
 async function classifyThread(page, selfName) {
-  return page.evaluate(
-    (selfName) => {
-      const clean = (value) => String(value || '').replace(/\s+/g, ' ').trim();
-      const same = (a, b) => clean(a).toLowerCase() === clean(b).toLowerCase();
-      const events = [...document.querySelectorAll('.msg-s-event-listitem')];
-
-      let inbound = 0;
-      let outbound = 0;
-      let conflicts = 0;
-
-      for (const event of events) {
-        const fromOther = event.classList.contains('msg-s-event-listitem--other');
-        const sender = clean(
-          event.querySelector('[class*="message-group__name"]')?.textContent ||
-            event.querySelector('img')?.getAttribute('alt')
-        );
-        if (sender && selfName) {
-          const senderIsSelf = same(sender, selfName);
-          if (senderIsSelf === fromOther) {
-            conflicts += 1;
-            continue;
-          }
-        }
-        if (fromOther) {
-          inbound += 1;
-        } else {
-          outbound += 1;
-        }
-      }
-
-      const lockup = document.querySelector('.msg-entity-lockup');
-      const profileLink =
-        lockup?.querySelector('a[href*="/in/"]') ||
-        document.querySelector('main a[href*="/in/"]');
-      const title = clean(
-        lockup?.querySelector('[class*="entity-info"], [class*="entity-subtitle"]')
-          ?.textContent
-      ).replace(/^Status is (?:offline|online|reachable)\s*/i, '');
-
-      return {
-        events: events.length,
-        inbound,
-        outbound,
-        conflicts,
-        profileUrl: profileLink?.href || '',
-        title,
-      };
-    },
-    selfName
-  );
+  return page.evaluate(extractThreadMessages, selfName);
 }
 
 async function readSelfName(page) {

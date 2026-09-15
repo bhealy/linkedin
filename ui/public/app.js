@@ -12,7 +12,10 @@ const sourceReview = {
   pages: 1,
   query: '',
   source: 'connections',
+  inbox: false,
   timer: null,
+  activeKey: '',
+  activeDirection: '',
 };
 
 function showWorkspaceTab(name, options = {}) {
@@ -1422,6 +1425,7 @@ function removePayload(execute) {
 
 function sourceContactRow(contact) {
   const row = document.createElement('tr');
+  row.dataset.key = contact.key;
   const protectCell = document.createElement('td');
   const checkbox = document.createElement('input');
   checkbox.type = 'checkbox';
@@ -1456,6 +1460,12 @@ function sourceContactRow(contact) {
   const nameCell = document.createElement('td');
   nameCell.append(textElement('span', 'source-contact-name', contact.name || contact.vanityName || '—'));
   const titleCell = textElement('td', '', contact.title || '—');
+  const inCell = document.createElement('td');
+  inCell.className = 'source-msg-col';
+  inCell.append(messageCountButton(contact, 'in', contact.inbound));
+  const outCell = document.createElement('td');
+  outCell.className = 'source-msg-col';
+  outCell.append(messageCountButton(contact, 'out', contact.outbound));
   const profileCell = document.createElement('td');
   if (contact.profileUrl) {
     const link = document.createElement('a');
@@ -1467,11 +1477,147 @@ function sourceContactRow(contact) {
   } else {
     profileCell.textContent = contact.vanityName || '—';
   }
-  row.append(protectCell, nameCell, titleCell, profileCell);
+  row.append(protectCell, nameCell, titleCell, inCell, outCell, profileCell);
   return row;
 }
 
+function messageCountButton(contact, direction, count) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'source-count';
+  button.dataset.direction = direction;
+  button.textContent = String(Number(count) || 0);
+  const label = direction === 'in' ? 'inbound' : 'outbound';
+  button.setAttribute(
+    'aria-label',
+    `Show ${button.textContent} ${label} messages from ${contact.name || contact.vanityName || 'contact'}`
+  );
+  button.addEventListener('click', () => showSourceMessages(contact, direction, button));
+  return button;
+}
+
+function closeSourceMessages() {
+  sourceReview.activeKey = '';
+  sourceReview.activeDirection = '';
+  document.getElementById('source-messages').hidden = true;
+  document.querySelectorAll('.source-count.is-active').forEach((button) => {
+    button.classList.remove('is-active');
+  });
+}
+
+function renderSourceMessages(contact, direction, data) {
+  const panel = document.getElementById('source-messages');
+  const list = document.getElementById('source-messages-list');
+  const snippet = document.getElementById('source-messages-snippet');
+  const thread = document.getElementById('source-messages-thread');
+  const label = direction === 'in' ? 'inbound' : 'outbound';
+  document.getElementById('source-messages-title').textContent =
+    `${contact.name || contact.vanityName || 'Contact'} · ${label}`;
+  list.replaceChildren();
+  const messages = data.messages || [];
+  if (!messages.length) {
+    list.append(textElement('li', 'source-empty', `No ${label} messages cached yet.`));
+  } else {
+    for (const message of messages) {
+      const item = document.createElement('li');
+      const meta = document.createElement('div');
+      meta.className = 'source-msg-meta';
+      const who = textElement(
+        'span',
+        message.direction === 'in' ? 'source-msg-in' : 'source-msg-out',
+        message.direction === 'in'
+          ? message.sender || contact.name || 'Them'
+          : message.sender || 'You'
+      );
+      meta.append(who, textElement('span', '', message.at || ''));
+      item.append(meta, textElement('div', '', message.text || ''));
+      list.append(item);
+    }
+  }
+  const snippetText = data.snippet || contact.snippet || '';
+  snippet.hidden = !snippetText;
+  snippet.textContent = snippetText ? `List snippet: ${snippetText}` : '';
+  if (data.threadUrl) {
+    thread.hidden = false;
+    thread.href = data.threadUrl;
+  } else {
+    thread.hidden = true;
+    thread.removeAttribute('href');
+  }
+  panel.hidden = false;
+}
+
+async function showSourceMessages(contact, direction, button) {
+  document.querySelectorAll('.source-count.is-active').forEach((node) => {
+    node.classList.remove('is-active');
+  });
+  button.classList.add('is-active');
+  sourceReview.activeKey = contact.key;
+  sourceReview.activeDirection = direction;
+  const status = document.getElementById('source-messages-status');
+  renderSourceMessages(contact, direction, { messages: [], snippet: contact.snippet });
+  status.textContent = 'Loading messages…';
+  const params = new URLSearchParams({
+    source: sourceReview.source,
+    key: contact.key,
+    direction,
+  });
+  try {
+    const response = await fetch(`/api/removal-source/messages?${params}`);
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data.error || `Request failed (${response.status})`);
+    }
+    if (sourceReview.activeKey !== contact.key || sourceReview.activeDirection !== direction) {
+      return;
+    }
+    if (data.cached || Number(contact[direction === 'in' ? 'inbound' : 'outbound']) === 0) {
+      status.textContent = data.cached
+        ? `${data.messages.length} ${direction === 'in' ? 'inbound' : 'outbound'} messages`
+        : 'No messages in this direction.';
+      renderSourceMessages(contact, direction, data);
+      return;
+    }
+    status.textContent = 'Opening LinkedIn to load this thread…';
+    const scraped = await postJson('/api/removal-source/messages', {
+      source: sourceReview.source,
+      key: contact.key,
+      direction,
+      password: password(),
+    });
+    if (sourceReview.activeKey !== contact.key || sourceReview.activeDirection !== direction) {
+      return;
+    }
+    contact.hasMessages = true;
+    contact.inbound = scraped.inbound;
+    contact.outbound = scraped.outbound;
+    const row = button.closest('tr');
+    if (row) {
+      const counts = row.querySelectorAll('.source-count');
+      if (counts[0]) {
+        counts[0].textContent = String(scraped.inbound);
+      }
+      if (counts[1]) {
+        counts[1].textContent = String(scraped.outbound);
+      }
+    }
+    status.textContent = `${scraped.messages.length} ${direction === 'in' ? 'inbound' : 'outbound'} messages`;
+    renderSourceMessages(contact, direction, scraped);
+  } catch (err) {
+    console.error(err.stack || err.message);
+    status.textContent = err.message;
+    renderSourceMessages(contact, direction, {
+      messages: [],
+      snippet: contact.snippet,
+      threadUrl: contact.threadId
+        ? `https://www.linkedin.com/messaging/thread/${contact.threadId}/`
+        : '',
+    });
+  }
+}
+
 async function loadSourceContacts() {
+  closeSourceMessages();
   const list = document.getElementById('source-list');
   const status = document.getElementById('source-list-status');
   status.textContent = 'Loading contacts…';
@@ -1491,11 +1637,13 @@ async function loadSourceContacts() {
     }
     sourceReview.page = data.page;
     sourceReview.pages = data.pages;
+    sourceReview.inbox = Boolean(data.inbox);
+    document.getElementById('source-table').classList.toggle('inbox', sourceReview.inbox);
     list.replaceChildren();
     if (!data.contacts.length) {
       const row = document.createElement('tr');
       const cell = textElement('td', 'source-empty', 'No matching contacts.');
-      cell.colSpan = 4;
+      cell.colSpan = sourceReview.inbox ? 6 : 4;
       row.append(cell);
       list.append(row);
     } else {
@@ -1513,6 +1661,7 @@ async function loadSourceContacts() {
 }
 
 function closeSourceModal() {
+  closeSourceMessages();
   document.getElementById('source-modal').hidden = true;
 }
 
@@ -1522,7 +1671,9 @@ document.getElementById('review-source').addEventListener('click', () => {
   sourceReview.query = '';
   document.getElementById('source-search').value = '';
   document.getElementById('source-modal-detail').textContent =
-    `${sourceReview.source === 'unrequited' ? 'unrequited-love' : sourceReview.source}.csv · Protected contacts remain in the CSV but can never be disconnected.`;
+    sourceReview.source === 'unrequited'
+      ? 'unrequited-love.csv · Protected contacts remain in the CSV but can never be disconnected. Click In or Out to read the thread.'
+      : `${sourceReview.source}.csv · Protected contacts remain in the CSV but can never be disconnected.`;
   document.getElementById('source-modal').hidden = false;
   loadSourceContacts();
   document.getElementById('source-search').focus();
@@ -1530,6 +1681,7 @@ document.getElementById('review-source').addEventListener('click', () => {
 
 document.getElementById('source-close').addEventListener('click', closeSourceModal);
 document.getElementById('source-backdrop').addEventListener('click', closeSourceModal);
+document.getElementById('source-messages-close').addEventListener('click', closeSourceMessages);
 document.getElementById('source-prev').addEventListener('click', () => {
   sourceReview.page = Math.max(1, sourceReview.page - 1);
   loadSourceContacts();

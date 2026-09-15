@@ -18,9 +18,12 @@ const {
   filterConnectionsByConnectedOn,
 } = require('../lib/connections-analytics');
 const {
+  getSourceContactMessages,
   listSourceContacts,
+  setSourceContactMessages,
   setSourceContactProtected,
 } = require('../lib/source-protection');
+const { scrapeThreadMessages } = require('../lib/thread-messages');
 
 const ROOT = path.join(__dirname, '..');
 const HOST = '127.0.0.1';
@@ -507,6 +510,72 @@ app.get('/api/removal-source', (req, res) => {
         pageSize: req.query.pageSize,
       })
     );
+  } catch (err) {
+    console.error(err.stack || err.message);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+function removalSourceFile(source) {
+  const filePath = REMOVAL_SOURCE_FILES[String(source || '')];
+  if (!filePath) {
+    throw new Error('Choose a valid source CSV.');
+  }
+  return filePath;
+}
+
+function messageDirection(value) {
+  const direction = String(value || 'all').trim().toLowerCase();
+  if (!['in', 'out', 'all'].includes(direction)) {
+    throw new Error('Choose in, out, or all messages.');
+  }
+  return direction;
+}
+
+app.get('/api/removal-source/messages', (req, res) => {
+  try {
+    const filePath = removalSourceFile(req.query.source);
+    if (!req.query.key) {
+      throw new Error('Choose a contact to inspect.');
+    }
+    res.json(getSourceContactMessages(filePath, req.query.key, messageDirection(req.query.direction)));
+  } catch (err) {
+    console.error(err.stack || err.message);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/removal-source/messages', async (req, res) => {
+  try {
+    if (currentJob) {
+      throw new Error('Wait for the running job to finish before opening LinkedIn messages.');
+    }
+    const body = req.body || {};
+    const filePath = removalSourceFile(body.source);
+    if (!body.key) {
+      throw new Error('Choose a contact to inspect.');
+    }
+    const direction = messageDirection(body.direction);
+    const cached = getSourceContactMessages(filePath, body.key, 'all');
+    if (cached.cached) {
+      res.json({
+        ...cached,
+        messages: cached.messages.filter((message) => direction === 'all' || message.direction === direction),
+        scraped: false,
+      });
+      return;
+    }
+    if (!cached.threadId) {
+      throw new Error('This conversation has no LinkedIn thread id yet. Run an inbox scan first.');
+    }
+    const scraped = await scrapeThreadMessages(cached.threadId, body.password);
+    const saved = setSourceContactMessages(filePath, body.key, scraped.messages);
+    res.json({
+      ...getSourceContactMessages(filePath, body.key, direction),
+      inbound: saved.inbound,
+      outbound: saved.outbound,
+      scraped: true,
+    });
   } catch (err) {
     console.error(err.stack || err.message);
     res.status(400).json({ error: err.message });

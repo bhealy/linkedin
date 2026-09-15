@@ -62,7 +62,16 @@ assert.strictEqual(rows[0].protected, true);
 assert.strictEqual(needsExamineWithParser(rows[0], cutoff, parseActivity), true);
 assert.strictEqual(isUnrequitedCandidate(rows[0]), false);
 
-applyExamineOutcome(rows[0], { status: 'replied' }, { inbound: 2, outbound: 1, activityText: 'Sep 13' });
+applyExamineOutcome(
+  rows[0],
+  { status: 'replied' },
+  {
+    inbound: 2,
+    outbound: 1,
+    activityText: 'Sep 13',
+    messages: [{ direction: 'in', text: 'hi', at: 'Sep 13', sender: 'Bea' }],
+  }
+);
 assert.strictEqual(needsExamineWithParser(rows[0], cutoff, parseActivity), false);
 
 const listedAgain = upsertListedConversation(rows, {
@@ -83,6 +92,7 @@ const roundTrip = loadInboxCsv(file);
 assert.strictEqual(roundTrip[0].threadId, 't1');
 assert.strictEqual(roundTrip[0].status, 'replied');
 assert.strictEqual(roundTrip[0].protected, true);
+assert.strictEqual(roundTrip[0].messages[0].text, 'hi');
 assert.strictEqual(findInboxRow(roundTrip, { threadId: 't1', name: 'Bea' }).name, 'Bea');
 
 assert.strictEqual(
