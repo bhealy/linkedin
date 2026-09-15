@@ -9,8 +9,11 @@ const {
   findInboxRow,
   needsExamineWithParser,
   isUnrequitedCandidate,
+  isObfuscatedVanity,
+  prefersIncomingVanity,
   markInboxDisconnected,
   applyExamineOutcome,
+  emptyInboxRow,
   listCaughtUp,
 } = require('../lib/inbox-csv');
 
@@ -131,6 +134,62 @@ writeInboxCsv(rows, file);
 const disconnectedRoundTrip = loadInboxCsv(file);
 assert.strictEqual(disconnectedRoundTrip[0].disconnected, 'yes');
 assert.strictEqual(disconnectedRoundTrip[0].disconnectedOn, disconnectedAt);
+
+// A thread read must never trade a public slug for the thread's opaque member
+// id, or the scan has to load a profile page to recover what it already had.
+const obfuscated = 'ACoAAExampleOpaqueMemberId00000000000';
+const keepsSlug = emptyInboxRow({
+  name: 'Bea',
+  profileUrl: 'https://www.linkedin.com/in/bea/',
+  vanityName: 'bea',
+});
+applyExamineOutcome(
+  keepsSlug,
+  { status: 'candidate' },
+  {
+    profileUrl: `https://www.linkedin.com/in/${obfuscated}`,
+    vanityName: obfuscated,
+    activityText: 'Sep 14',
+  }
+);
+assert.strictEqual(keepsSlug.vanityName, 'bea');
+assert.strictEqual(keepsSlug.profileUrl, 'https://www.linkedin.com/in/bea/');
+assert.strictEqual(keepsSlug.status, 'candidate');
+
+// An opaque id is still better than nothing, and a real slug replaces it.
+const takesAnything = emptyInboxRow({ name: 'Cass' });
+applyExamineOutcome(
+  takesAnything,
+  { status: 'candidate' },
+  {
+    profileUrl: `https://www.linkedin.com/in/${obfuscated}`,
+    vanityName: obfuscated,
+    activityText: 'Sep 14',
+  }
+);
+assert.strictEqual(takesAnything.vanityName, obfuscated);
+applyExamineOutcome(
+  takesAnything,
+  { status: 'candidate' },
+  {
+    profileUrl: 'https://www.linkedin.com/in/cass/',
+    vanityName: 'cass',
+    activityText: 'Sep 15',
+  }
+);
+assert.strictEqual(takesAnything.vanityName, 'cass');
+assert.strictEqual(takesAnything.profileUrl, 'https://www.linkedin.com/in/cass/');
+
+assert.strictEqual(isObfuscatedVanity(obfuscated), true);
+assert.strictEqual(isObfuscatedVanity('bea'), false);
+assert.strictEqual(isObfuscatedVanity(''), false);
+assert.strictEqual(prefersIncomingVanity('', obfuscated), true);
+assert.strictEqual(prefersIncomingVanity('bea', obfuscated), false);
+assert.strictEqual(prefersIncomingVanity(obfuscated, 'bea'), true);
+assert.strictEqual(prefersIncomingVanity('bea', ''), false);
+// Two usable slugs: keep the one already stored rather than churning it.
+assert.strictEqual(prefersIncomingVanity('bea', 'bea-2'), false);
+assert.strictEqual(prefersIncomingVanity(obfuscated, obfuscated), false);
 
 function emptyListed(name, activityText) {
   return {

@@ -93,7 +93,38 @@ assert.strictEqual(RATE_LIMIT_RETRY_LIMIT, 3);
 
 assert.strictEqual(unreadAfterLostContext({ row: { status: 'listed' } }), true);
 assert.strictEqual(unreadAfterLostContext({ row: { status: 'error' } }), true);
-assert.strictEqual(unreadAfterLostContext({ row: { status: 'skipped' } }), false);
-assert.strictEqual(unreadAfterLostContext({ row: { status: 'candidate' } }), false);
+
+// Read in this pass: examinedActivity matches what we queued, so skip it.
+assert.strictEqual(
+  unreadAfterLostContext({
+    activityText: 'Sep 14',
+    row: { status: 'candidate', examinedActivity: 'Sep 14' },
+  }),
+  false
+);
+assert.strictEqual(
+  unreadAfterLostContext({
+    activityText: 'Sep 14',
+    row: { status: 'skipped', examinedActivity: 'Sep 14' },
+  }),
+  false
+);
+
+// Queued because the thread changed since it was last read: must be re-read,
+// not silently dropped.
+assert.strictEqual(
+  unreadAfterLostContext({
+    activityText: '4:53 PM',
+    row: { status: 'candidate', examinedActivity: 'Sep 4' },
+  }),
+  true
+);
+assert.strictEqual(
+  unreadAfterLostContext({
+    activityText: '4:53 PM',
+    row: { status: 'replied', examinedActivity: 'Sep 4' },
+  }),
+  true
+);
 
 console.log('inbox-scan-recovery tests passed');

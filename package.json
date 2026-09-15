@@ -16,6 +16,8 @@
     "inbox:scan": "node scan-inbox.js",
     "inbox:cache": "node scan-inbox.js --cache",
     "inbox:scan:status": "node scan-inbox.js --status",
+    "inbox:backfill-slugs": "node backfill-inbox-slugs.js",
+    "inbox:backfill-slugs:apply": "node backfill-inbox-slugs.js --apply",
     "profile:scrape": "node scrape-profile.js",
     "profile:html": "node generate-profile-html.js",
     "profile:html:open": "node generate-profile-html.js --open",

@@ -20,6 +20,7 @@ const {
 const { buildConnectionIndex, matchConnection } = require('./lib/connection-index');
 const {
   applyExamineOutcome,
+  isObfuscatedVanity,
   isUnrequitedCandidate,
   loadInboxCsv,
   listCaughtUp,
@@ -176,10 +177,6 @@ function vanityFromUrl(url) {
     console.error(err.stack || err.message);
     return String(match[1]).trim();
   }
-}
-
-function isObfuscatedVanity(vanityName) {
-  return /^ACoAA/i.test(String(vanityName || ''));
 }
 
 function persistCsv(rows, filePath) {
