@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>How to use LinkedIn Connection Cleaner — Executive summary &amp; deeper dive</title>
-  <meta name="description" content="How to download, analyse, and clean your LinkedIn network locally. Executive summary plus a full command reference for download, --months, analytics, scrape, remove, and profile export.">
+  <meta name="description" content="How to download LinkedIn connections, cache the inbox, find unanswered messages, analyse locally, and bulk-remove. Executive summary plus command reference for the dashboard, --months, inbox budget, scrape, remove, and profile export.">
   <meta name="robots" content="index, follow">
   <link rel="canonical" href="https://bhealy.github.io/linkedin/readme.html">
   <meta property="og:title" content="How to use LinkedIn Connection Cleaner">
@@ -60,41 +60,43 @@
       <h2 class="section-title">Executive summary</h2>
       <div class="exec-card">
         <p>
-          <strong>LinkedIn Connection Cleaner</strong> is a set of Node.js scripts that run on your computer.
-          They log into LinkedIn in a local Chromium window (Puppeteer), export your 1st-degree connections,
-          build a private analytics page, optionally find sales/recruitment contacts, and can bulk-remove
-          connections you no longer want. Nothing is uploaded to this site or any third-party API.
+          <strong>LinkedIn Connection Cleaner</strong> is a Node.js toolkit that runs on your computer.
+          The recommended front end is a localhost dashboard (<code>npm start</code> → <code>http://127.0.0.1:3847/</code>).
+          Jobs log into LinkedIn in your <strong>installed Google Chrome</strong> (not Puppeteer's Chrome-for-Testing build),
+          export your 1st-degree connections, cache messaging, flag unanswered inbound threads (“unrequited love”),
+          show live analytics and job ETAs, and can bulk-remove connections you have previewed.
+          Nothing is uploaded to this site or any third-party API.
         </p>
         <p>
-          LinkedIn does not give you a good bulk-export or bulk-remove UI for a large network.
-          This toolkit pages through your connections list, writes a CSV, and lets you inspect that CSV
-          before you delete anything. Removals default to <em>dry-run</em> until you pass <code>--execute</code>.
+          LinkedIn does not give you a good bulk-export or bulk-remove UI for a large network, and its Connections
+          inbox filter stops after about 100 threads. This toolkit writes CSVs you can inspect before you delete anything.
+          Removals default to <em>dry-run</em> until you pass <code>--execute</code> (or confirm in the dashboard).
         </p>
         <div class="exec-points">
           <article>
             <h3>Who it is for</h3>
-            <p>People with a large LinkedIn network who want a local CSV, charts, and controlled cleanup — not a hosted SaaS product.</p>
+            <p>People with a large LinkedIn network who want a local CSV, inbox cleanup, charts, and controlled disconnects — not a hosted SaaS product.</p>
           </article>
           <article>
             <h3>What you get</h3>
-            <p>A <code>connections.csv</code> file, a self-contained <code>connections-analytics.html</code> dashboard, optional classified search results, and optional disconnects.</p>
+            <p>A dashboard, <code>connections.csv</code>, <code>unrequited-love.csv</code>, optional analytics HTML, optional sales scrape, and optional disconnects with protect flags.</p>
           </article>
           <article>
             <h3>What stays private</h3>
-            <p>Your password is typed at the terminal, not stored. Session cookies live in <code>.linkedin-session/</code>. CSVs and analytics HTML are gitignored. Do not commit or publish them.</p>
+            <p>Password is never stored in <code>.env</code>. Session cookies live in <code>.linkedin-session/</code>. CSVs, <code>inbox-page-opens.json</code>, and analytics HTML are gitignored.</p>
           </article>
           <article>
             <h3>What to expect</h3>
-            <p>Each download run caps at 5,000 <em>new</em> contacts. Requests are delayed to reduce rate limits. Automation still carries risk — start small.</p>
+            <p>Download runs cap at 5,000 new contacts. Inbox search caps conversation page opens at 2,000/hour and 4,000/4 hours. Automation still carries risk — start small, use 1 tab if challenged.</p>
           </article>
         </div>
         <h3 class="exec-flow-title">The default path</h3>
         <ol class="exec-flow">
-          <li>Install Node.js 18+, clone the repo, <code>npm install</code>, copy <code>.env.example</code> to <code>.env</code>, set <code>LINKEDIN_EMAIL</code>. Or run <code>npm start</code> and use the local dashboard at <code>http://127.0.0.1:3847/</code>.</li>
-          <li>Run <code>npm run connections:download</code> (repeat until the summary says the list is complete, or use <code>--months N</code> for recent contacts only).</li>
-          <li>Run <code>npm run connections:analytics:open</code> and explore the dashboard locally.</li>
-          <li>Optional: <code>npm run scrape:sales</code> to classify sales/recruitment via people search.</li>
-          <li>Dry-run removals, then execute: <code>npm run connections:remove -- --status spam --limit 20</code> then add <code>--execute</code> when you are sure.</li>
+          <li>Install Node.js 18+, Google Chrome, clone the repo, <code>npm install</code>, copy <code>.env.example</code> to <code>.env</code>, set <code>LINKEDIN_EMAIL</code>. Run <code>npm start</code>.</li>
+          <li>Download connections (repeat until complete, or use <code>--months N</code>).</li>
+          <li>Cache the conversation list, then search for unrequited love.</li>
+          <li>Review &amp; protect contacts. Dry-run removals, then execute.</li>
+          <li>Optional: analytics HTML, sales scrape, or a single-profile archive.</li>
         </ol>
         <div class="code-block">
           <button type="button" class="copy-btn" aria-label="Copy code">Copy</button>
@@ -103,8 +105,8 @@ cd linkedin
 npm install
 cp .env.example .env
 # edit .env: LINKEDIN_EMAIL=you@example.com
-npm run connections:download
-npm run connections:analytics:open</pre>
+npm start
+# open http://127.0.0.1:3847/</pre>
         </div>
       </div>
     </section>
@@ -119,11 +121,12 @@ npm run connections:analytics:open</pre>
           <p>On this page</p>
           <ol>
             <li><a href="#dive-setup">Install</a></li>
+            <li><a href="#dive-dashboard">Dashboard</a></li>
             <li><a href="#dive-download">Download connections</a></li>
             <li><a href="#dive-months">Last N months</a></li>
+            <li><a href="#dive-inbox">Unrequited love</a></li>
             <li><a href="#dive-analytics">Analytics</a></li>
             <li><a href="#dive-scrape">Title scrape</a></li>
-            <li><a href="#dive-inbox">Unrequited love</a></li>
             <li><a href="#dive-remove">Remove</a></li>
             <li><a href="#dive-profile">Single profile</a></li>
             <li><a href="#dive-files">Files &amp; privacy</a></li>
@@ -133,7 +136,7 @@ npm run connections:analytics:open</pre>
         <div class="dive-body">
           <article id="dive-setup">
             <h3>1. Install</h3>
-            <p>Requires Node.js 18+ and a LinkedIn account. Puppeteer downloads Chromium on <code>npm install</code>.</p>
+            <p>Requires Node.js 18+, <strong>Google Chrome</strong>, and a LinkedIn account. Puppeteer still downloads its own Chrome-for-Testing binary on <code>npm install</code>, but jobs launch the Chrome app already on your machine.</p>
             <div class="code-block">
               <button type="button" class="copy-btn" aria-label="Copy code">Copy</button>
               <pre>git clone https://github.com/bhealy/linkedin.git
@@ -146,12 +149,18 @@ cp .env.example .env</pre>
               <button type="button" class="copy-btn" aria-label="Copy code">Copy</button>
               <pre>LINKEDIN_EMAIL=you@example.com</pre>
             </div>
-            <p>Optional: set <code>LI_AT</code> to your LinkedIn <code>li_at</code> cookie to skip the password prompt. On first run without that cookie, a browser window opens; complete login (and any checkpoint) there. The session is reused from <code>.linkedin-session/</code>.</p>
-            <p>For a clickable UI on your Mac, run <code>npm start</code> and use <code>http://127.0.0.1:3847/</code> (localhost only). Password is sent per job and is not stored in <code>.env</code>.</p>
+            <p>Optional: set <code>LI_AT</code> to your LinkedIn <code>li_at</code> cookie. It is injected only when <code>.linkedin-session/</code> has no session, and only accepted if LinkedIn does not redirect to login, authwall, or checkpoint. A stale cookie cannot displace a working saved login. If it is rejected, sign in in the Chrome window.</p>
+          </article>
+
+          <article id="dive-dashboard">
+            <h3>2. Local dashboard</h3>
+            <p>Run <code>npm start</code> and open <code>http://127.0.0.1:3847/</code> (localhost only). The Activity tab is the journey: login → download → cache inbox → search → review → remove. The Analytics tab charts connections and conversations with filters. Jobs show live status and an ETA. Only one job runs at a time. <strong>Stop / pause for now</strong> keeps CSV and cache progress.</p>
+            <p>Password is sent per job and is not stored in <code>.env</code>. You can remember it in this browser for 30 days (local storage on this machine only).</p>
+            <p>When the conversation page-open cap is hit, the dashboard offers come back later, schedule a slower scan (fewer tabs, waits until the cap eases), or override.</p>
           </article>
 
           <article id="dive-download">
-            <h3>2. Download your connections</h3>
+            <h3>3. Download your connections</h3>
             <p>This is the main export. It opens the connections page and paginates LinkedIn’s list <strong>newest first</strong> via the SDUI pagination API. Rows are appended to <code>connections.csv</code> after every batch. Progress is stored in <code>download-connections-state.json</code> so you can stop and continue.</p>
             <div class="code-block">
               <button type="button" class="copy-btn" aria-label="Copy code">Copy</button>
@@ -177,7 +186,7 @@ node download-connections.js --limit 100</pre>
           </article>
 
           <article id="dive-months">
-            <h3>3. Only the last N months</h3>
+            <h3>4. Only the last N months</h3>
             <p>Because the list is newest first, <code>--months N</code> starts at the top and <strong>stops paging</strong> once a batch is entirely older than today minus N calendar months. That avoids walking your whole archive.</p>
             <div class="code-block">
               <button type="button" class="copy-btn" aria-label="Copy code">Copy</button>
@@ -188,8 +197,8 @@ npm run connections:download -- --months 3 --limit 5000</pre>
           </article>
 
           <article id="dive-analytics">
-            <h3>4. Analytics dashboard</h3>
-            <p>Turns <code>connections.csv</code> into a single local HTML file: growth by month, roles and seniority inferred from headlines, top companies and keywords, weekday patterns, and a searchable table.</p>
+            <h3>5. Analytics</h3>
+            <p>The dashboard Analytics tab charts connections (date filters, roles, seniority, companies) and cached conversations (status, activity window, explorer). Optionally turn <code>connections.csv</code> into a single local HTML file:</p>
             <div class="code-block">
               <button type="button" class="copy-btn" aria-label="Copy code">Copy</button>
               <pre>npm run connections:analytics:open
@@ -199,7 +208,7 @@ node generate-connections-analytics.js --input connections.csv --output report.h
           </article>
 
           <article id="dive-scrape">
-            <h3>5. Optional: scrape by job title</h3>
+            <h3>6. Optional: scrape by job title</h3>
             <p>People search is capped at about 250 hits per query. <code>npm run scrape:sales</code> walks a keyword × geography grid in <code>search-plan.json</code> and classifies each person as <code>sales</code>, <code>recruitment</code>, <code>sales_and_recruitment</code>, or <code>not_target</code>. Output: <code>sales-connections.csv</code>. Skip this if you only want a full export and charts.</p>
             <div class="code-block">
               <button type="button" class="copy-btn" aria-label="Copy code">Copy</button>
@@ -210,8 +219,8 @@ npm run scrape:sales:fresh</pre>
           </article>
 
           <article id="dive-inbox">
-            <h3>6. Search for unrequited love</h3>
-            <p>Opens LinkedIn Messaging and lists every conversation, matching each name against <code>connections.csv</code> to decide who is a connection, then reads the matched threads whose latest activity falls inside <code>--days</code> (default 30). LinkedIn’s own <strong>Connections</strong> inbox filter is not used: it stops serving results after roughly 100 threads, so it hides most of your history. Download your connections before searching, and group threads are skipped. Threads are opened in parallel Chromium tabs (default 4) and scrolled to the top. A conversation is stored in <code>unrequited-love.csv</code> the first time it is seen. Later runs skip threads whose last activity has not changed.</p>
+            <h3>7. Search for unrequited love</h3>
+            <p>Opens LinkedIn Messaging and lists every conversation, matching each name against <code>connections.csv</code> to decide who is a connection, then reads the matched threads whose latest activity falls inside <code>--days</code> (default 30). LinkedIn’s own <strong>Connections</strong> inbox filter is not used: it stops serving results after roughly 100 threads, so it hides most of your history. Download your connections before searching, and group threads are skipped. Threads are opened in parallel Chrome tabs (default 4) and scrolled to the top. A conversation is stored in <code>unrequited-love.csv</code> the first time it is seen. Later runs skip threads whose last activity has not changed.</p>
             <p>A connection becomes a candidate only when they sent at least one message and you sent <strong>none</strong> in that thread. Candidate rows are the ones the Remove card uses; replied and listed rows stay in the same CSV as the cache. Nothing is removed by the search itself. Successful removals are immediately marked <code>disconnected=yes</code> with a timestamp in this CSV, so later searches and removal runs skip them without losing the conversation history.</p>
             <p>Use <strong>Cache conversation list</strong> first. Search stays locked until that pass reaches the oldest conversation. The cache pages the inbox via LinkedIn’s conversation list API and saves every connection conversation without opening threads. <strong>Stop / pause for now</strong> keeps the CSV and the list cursor. Run cache again to resume older pages instead of starting over. After the list is complete, a search only loads the latest messages until it catches up with the cache, then decides from the CSV which threads still need a read.</p>
             <p>Opening conversation pages is capped at <strong>2,000 per hour</strong> and <strong>4,000 per 4 hours</strong>. The dashboard shows the count and warns that LinkedIn may block the account if you go over. The search pauses when the cap is hit; you can come back later to resume, schedule a slower scan with fewer tabs, or override the limit.</p>
@@ -231,7 +240,7 @@ npm run inbox:cache -- --fresh</pre>
               <tbody>
                 <tr><td><code>--days</code></td><td>How far back to look, by last activity (default 30)</td></tr>
                 <tr><td><code>--limit</code></td><td>Max conversations to open this run</td></tr>
-                <tr><td><code>--tabs</code></td><td>Parallel Chromium tabs for reading threads (default 4)</td></tr>
+                <tr><td><code>--tabs</code></td><td>Parallel Chrome tabs for reading threads (default 4)</td></tr>
                 <tr><td><code>--override-page-budget</code></td><td>Ignore the 2,000/hour and 4,000/4-hour conversation-page cap</td></tr>
                 <tr><td><code>--pace-page-budget</code></td><td>Wait for the cap to ease instead of pausing</td></tr>
                 <tr><td><code>--cache</code></td><td>Page the conversation list into the CSV without opening threads. Re-running resumes from the last saved page</td></tr>
@@ -249,7 +258,7 @@ npm run connections:remove -- --execute --csv unrequited-love.csv --limit 20</pr
           </article>
 
           <article id="dive-remove">
-            <h3>7. Bulk remove</h3>
+            <h3>8. Bulk remove</h3>
             <p>Omit <code>--execute</code> to print who would be removed. Removals are permanent on LinkedIn. Use <strong>Review &amp; protect contacts</strong> to browse or search the full selected source CSV and protect individual contacts; that choice is stored in the CSV’s <code>protected</code> column and all removal runs skip those rows. When the source is an inbox CSV such as <code>unrequited-love.csv</code>, only people who sent more than one unanswered message are included by default. Pass <code>--include-single-message</code> to also remove people who sent a single unanswered message. A safe list is on by default and protects founders, C-suite leaders, investors, board members and selected owner/partner roles. Add protected phrases with <code>--safe-keywords</code>, or deliberately disable this protection with <code>--no-unrequited-safe-list</code>. The dry run reports protected and would-remove counts. Default ignored company names in headlines: Manna and Meili (add more with <code>--ignore-company</code>). Spacing is about 1.2 seconds between removals. Removed vanity names are remembered and marked in both the source inbox CSV and master <code>connections.csv</code>, so later runs skip them.</p>
             <div class="code-block">
               <button type="button" class="copy-btn" aria-label="Copy code">Copy</button>
@@ -277,7 +286,7 @@ npm run connections:remove -- --execute --status sales --limit 50</pre>
           </article>
 
           <article id="dive-profile">
-            <h3>8. Archive one profile</h3>
+            <h3>9. Archive one profile</h3>
             <p>Exports a single public profile to JSON plus a self-contained HTML page under <code>profiles/</code> (gitignored). Default visit is experience, education, and skills (~30–45s). <code>--full-details</code> hits every detail sub-page.</p>
             <div class="code-block">
               <button type="button" class="copy-btn" aria-label="Copy code">Copy</button>
@@ -289,7 +298,7 @@ npm run profile:html:open</pre>
           </article>
 
           <article id="dive-files">
-            <h3>9. Files you must not publish</h3>
+            <h3>10. Files you must not publish</h3>
             <p>Safe to share: source code, <code>.env.example</code>, this docs site. Never commit or upload:</p>
             <table>
               <thead>
@@ -297,9 +306,10 @@ npm run profile:html:open</pre>
               </thead>
               <tbody>
                 <tr><td><code>.env</code></td><td>Your email / optional session cookie</td></tr>
-                <tr><td><code>.linkedin-session/</code></td><td>Logged-in browser profile</td></tr>
+                <tr><td><code>.linkedin-session/</code></td><td>Logged-in Chrome profile</td></tr>
                 <tr><td><code>connections.csv</code>, <code>sales-connections.csv</code></td><td>Your network</td></tr>
                 <tr><td><code>unrequited-love.csv</code></td><td>Inbox conversation cache plus unrequited candidates</td></tr>
+                <tr><td><code>inbox-page-opens.json</code></td><td>Timestamps used for the page-open budget</td></tr>
                 <tr><td><code>connections-analytics.html</code></td><td>Embedded contact list</td></tr>
                 <tr><td><code>profiles/</code></td><td>Archived profile dumps</td></tr>
                 <tr><td><code>*-state.json</code>, <code>remove-connections-results.json</code></td><td>Progress and personal IDs</td></tr>

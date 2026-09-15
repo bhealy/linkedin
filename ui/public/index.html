@@ -15,7 +15,7 @@
     <div class="brand" tabindex="0" data-tooltip="LinkedIn Connection Cleaner runs entirely on this computer and helps you download, analyse and selectively remove first-degree connections."><span class="mark">in</span><span>Connection Cleaner<small>Private workspace</small></span></div>
     <div class="head-right">
       <nav class="docs-nav">
-        <a href="/docs/index.html#wizard" target="_blank" rel="noopener" data-tooltip="Open the eight-step local walkthrough covering installation, downloading, analytics, removal and privacy.">Setup wizard</a>
+        <a href="/docs/index.html#wizard" target="_blank" rel="noopener" data-tooltip="Open the nine-step local walkthrough covering the dashboard, download, inbox search, analytics, removal and privacy.">Setup wizard</a>
         <a href="/docs/readme.html" target="_blank" rel="noopener" data-tooltip="Open the complete local documentation, including the executive summary and detailed reference.">Full guide</a>
       </nav>
       <p class="badge" tabindex="0" data-tooltip="Only software on this Mac can access the dashboard. It is not exposed to your network or the internet.">Localhost only · 127.0.0.1</p>
@@ -75,7 +75,7 @@
           <div class="step-marker"><span>01</span></div>
           <div class="step-content">
             <div class="step-heading"><div><p class="step-kicker">Start here</p><h2>Set up your login</h2><p class="purpose">Tell the tool which LinkedIn account to use before anything else can begin.</p></div><span class="step-state">Current step</span></div>
-            <div class="privacy-note"><span>◆</span><p><strong>Your password stays private.</strong> Email is saved locally; your password is only passed to the active LinkedIn job.</p></div>
+            <div class="privacy-note"><span>◆</span><p><strong>Your password stays private.</strong> Email is saved locally; your password is only passed to the active LinkedIn job. Jobs open your installed Google Chrome, not Puppeteer's automated-looking browser.</p></div>
             <div class="form-grid">
               <label>LinkedIn email<input id="email" type="email" autocomplete="username" placeholder="you@example.com" data-tooltip="Enter the email address used to sign into LinkedIn. Save writes only this email to the local .env file."></label>
               <label>Password <span class="hint" id="password-hint">(this run only)</span><input id="password" type="password" autocomplete="current-password" placeholder="••••••••••••" data-tooltip="Used only if LinkedIn needs a fresh login. It is passed directly to the job that needs it and is never written to .env."></label>
@@ -95,7 +95,7 @@
               <label>Limit new contacts<input id="dl-limit" type="number" min="1" placeholder="5,000" data-tooltip="Maximum previously unseen connections to add. Leave blank for 5,000."></label>
             </div>
             <label class="check" data-tooltip="Start from an empty connections.csv and reset pagination state. Existing files are backed up first."><input id="fresh" type="checkbox"> Start with a fresh CSV and state</label>
-            <div class="action-row"><button type="button" id="start-download" class="primary" data-tooltip="Open LinkedIn in managed Chromium and begin downloading connections.">Download connections <span>→</span></button><a class="card-help" href="/docs/readme.html#dive-download" target="_blank" rel="noopener">Download guide</a></div>
+            <div class="action-row"><button type="button" id="start-download" class="primary" data-tooltip="Open LinkedIn in your installed Google Chrome and begin downloading connections.">Download connections <span>→</span></button><a class="card-help" href="/docs/readme.html#dive-download" target="_blank" rel="noopener">Download guide</a></div>
           </div>
         </section>
 
@@ -251,7 +251,7 @@
             </div>
             <div class="form-grid thirds">
               <label>Days back<input id="inbox-days" type="number" min="1" value="30" data-tooltip="Only read conversations active within this many days."></label>
-              <label>Parallel tabs<input id="inbox-tabs" type="number" min="1" value="4" data-tooltip="How many Chromium tabs to use at once. Start with 4. Use 1 for a slower scan."></label>
+              <label>Parallel tabs<input id="inbox-tabs" type="number" min="1" value="4" data-tooltip="How many Chrome tabs to use at once. Start with 4. Use 1 for a slower scan."></label>
               <label>Thread limit <span class="hint">(optional)</span><input id="inbox-limit" type="number" min="1" placeholder="All" data-tooltip="Maximum conversations to open in this run."></label>
             </div>
             <label class="check" data-tooltip="Back up and reset the conversation CSV and scan state before running."><input id="inbox-fresh" type="checkbox"> Start with a fresh CSV and state</label>
@@ -352,7 +352,7 @@
       <span class="status-pill" id="inbox-budget-pill">Limit reached</span>
       <h2 id="inbox-budget-title">LinkedIn may block this account</h2>
       <p id="inbox-budget-modal-copy">You have opened too many conversation pages recently. Come back later to resume unread threads, schedule a slower scan with fewer tabs, or override the limit.</p>
-      <label>Slower scan tabs<input id="inbox-slow-tabs" type="number" min="1" value="1" data-tooltip="How many Chromium tabs the scheduled slower scan should use. 1 is safest."></label>
+      <label>Slower scan tabs<input id="inbox-slow-tabs" type="number" min="1" value="1" data-tooltip="How many Chrome tabs the scheduled slower scan should use. 1 is safest."></label>
       <label class="check" data-tooltip="Ignore the 2,000/hour and 4,000/4-hour limits for this run. LinkedIn may still block the account."><input id="inbox-override-budget" type="checkbox"> Override the limit and search anyway</label>
       <div class="row modal-actions">
         <button type="button" id="inbox-budget-later">Come back later</button>

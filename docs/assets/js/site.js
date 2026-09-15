@@ -1,5 +1,5 @@
 (function () {
-  const TOTAL_STEPS = 8;
+  const TOTAL_STEPS = 9;
   let currentStep = 1;
 
   const slides = document.querySelectorAll('.wizard-slide');
