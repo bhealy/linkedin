@@ -20,7 +20,7 @@
     "profile:html": "node generate-profile-html.js",
     "profile:html:open": "node generate-profile-html.js --open",
     "start": "node ui/server.js",
-    "test": "node test/parse-sdui-connections.test.js && node test/connections-csv.test.js && node test/rolling-backup.test.js && node test/keyword-filter.test.js && node test/inbox-thread-date.test.js && node test/inbox-csv.test.js && node test/inbox-analytics.test.js && node test/connections-analytics.test.js && node test/connection-index.test.js && node test/remove-connections.test.js && node test/inbox-list-api.test.js && node test/linkedin-auth-lock.test.js && node test/inbox-scan-recovery.test.js && node test/thread-messages.test.js && node test/job-eta.test.js && node test/inbox-page-budget.test.js"
+    "test": "node test/parse-sdui-connections.test.js && node test/connections-csv.test.js && node test/rolling-backup.test.js && node test/keyword-filter.test.js && node test/inbox-thread-date.test.js && node test/inbox-csv.test.js && node test/inbox-analytics.test.js && node test/connections-analytics.test.js && node test/connection-index.test.js && node test/remove-connections.test.js && node test/inbox-list-api.test.js && node test/linkedin-auth-lock.test.js && node test/linkedin-auth-li-at.test.js && node test/inbox-scan-recovery.test.js && node test/thread-messages.test.js && node test/job-eta.test.js && node test/inbox-page-budget.test.js"
   },
   "keywords": [],
   "author": "",

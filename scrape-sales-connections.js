@@ -8,6 +8,7 @@ const {
   writeProtectedFile,
   removeProtectedFile,
 } = require('./lib/rolling-backup');
+const { browserLaunchOptions } = require('./lib/linkedin-auth');
 
 const LINKEDIN_EMAIL = process.env.LINKEDIN_EMAIL;
 const SEARCH_URL_BASE = 'https://www.linkedin.com/search/results/people/';
@@ -1331,12 +1332,7 @@ async function main() {
     return;
   }
 
-  const browser = await puppeteer.launch({
-    headless: headless ? 'new' : false,
-    userDataDir: path.join(__dirname, '.linkedin-session'),
-    args: ['--no-sandbox', '--disable-setuid-sandbox'],
-    defaultViewport: { width: 1280, height: 900 },
-  });
+  const browser = await puppeteer.launch(browserLaunchOptions({ headless }));
 
   try {
     const page = await browser.newPage();

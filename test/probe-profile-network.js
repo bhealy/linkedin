@@ -1,6 +1,7 @@
 const puppeteer = require('puppeteer');
 const fs = require('fs');
 const path = require('path');
+const { browserLaunchOptions } = require('../lib/linkedin-auth');
 
 const PROFILE_URL = 'https://www.linkedin.com/in/your-profile/';
 const OUT_DIR = path.join(__dirname, 'output');
@@ -8,12 +9,9 @@ const OUT_DIR = path.join(__dirname, 'output');
 async function main() {
   fs.mkdirSync(OUT_DIR, { recursive: true });
 
-  const browser = await puppeteer.launch({
-    headless: process.env.HEADLESS === 'true' ? 'new' : false,
-    userDataDir: path.join(__dirname, '..', '.linkedin-session'),
-    args: ['--no-sandbox', '--disable-setuid-sandbox'],
-    defaultViewport: { width: 1280, height: 900 },
-  });
+  const browser = await puppeteer.launch(
+    browserLaunchOptions({ headless: process.env.HEADLESS === 'true' })
+  );
 
   const page = await browser.newPage();
   const apiCalls = [];

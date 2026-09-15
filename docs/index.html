@@ -225,7 +225,7 @@ cp .env.example .env</pre>
                 (Application → Cookies → linkedin.com) into <code>.env</code> to skip the login prompt.
               </div>
             </div>
-            <p>On first run, a Chromium browser window opens via Puppeteer. Log in to LinkedIn if prompted — your session is saved in <code>.linkedin-session/</code> for future runs.</p>
+            <p>On first run, a Google Chrome window opens via Puppeteer. Log in to LinkedIn if prompted — your session is saved in <code>.linkedin-session/</code> for future runs. Your installed Chrome is used rather than Puppeteer's bundled build, because the bundled build advertises itself as automated and draws a captcha.</p>
           </article>
 
           <!-- Step 3 -->
