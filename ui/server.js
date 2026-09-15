@@ -264,6 +264,16 @@ function summariseJobOutput(job) {
         value: 'Progress saved — run cache again to resume older pages',
       });
     }
+    const throttled = pickLog(
+      log,
+      /LinkedIn rate limited the search \(HTTP ([0-9]+)\) after .*?\. ([0-9,]+) conversation\(s\) were left unread/i
+    );
+    if (throttled) {
+      summary.rows.push({
+        label: 'Rate limited',
+        value: `HTTP ${throttled[1]} — ${throttled[2]} left unread; wait, then run again`,
+      });
+    }
     if (caught) {
       summary.rows.push({ label: 'List', value: 'Stopped at the saved conversation cache' });
     } else {

@@ -33,9 +33,12 @@ const {
   writeProtectedFile,
 } = require('./lib/rolling-backup');
 const {
+  RATE_LIMIT_RETRY_LIMIT,
   SCAN_BROWSER_RESTART_LIMIT,
+  describeRateLimit,
   describeThreadOpenFailure,
   isLostContext,
+  rateLimitBackoffMs,
   unreadAfterLostContext,
 } = require('./lib/inbox-scan-recovery');
 
@@ -663,7 +666,9 @@ async function openConversation(page, entry) {
     await page.waitForSelector('.msg-s-event-listitem', { timeout: 15000 });
   } catch (err) {
     console.error(err.stack || err.message);
-    return describeThreadOpenFailure(err, threadId);
+    return describeThreadOpenFailure(err, threadId, {
+      messagingUiRendered: await messagingUiRendered(page),
+    });
   }
 
   return { opened: true, threadId };
@@ -673,20 +678,70 @@ function threadUrl(threadId) {
   return `https://www.linkedin.com/messaging/thread/${threadId}/`;
 }
 
+// A throttled page still fires domcontentloaded, so the only reliable signal
+// is the response status. Without this check the missing message selector
+// looks identical to an empty conversation.
+function rateLimitFromResponse(response, threadId) {
+  if (!response) {
+    return null;
+  }
+  const headers = response.headers() || {};
+  return describeRateLimit(
+    response.status(),
+    headers['retry-after'],
+    threadId
+  );
+}
+
+async function messagingUiRendered(page) {
+  try {
+    return await page.evaluate(() =>
+      Boolean(
+        document.querySelector(
+          '.msg-s-message-list, .msg-s-message-list-container, .msg-thread'
+        )
+      )
+    );
+  } catch (err) {
+    console.error(err.stack || err.message);
+    return false;
+  }
+}
+
 async function openThreadById(page, threadId) {
   if (!threadId) {
     return { opened: false, reason: 'no thread id' };
   }
   try {
-    await page.goto(threadUrl(threadId), {
+    const response = await page.goto(threadUrl(threadId), {
       waitUntil: 'domcontentloaded',
       timeout: 60000,
     });
+    const rateLimited = rateLimitFromResponse(response, threadId);
+    if (rateLimited) {
+      return rateLimited;
+    }
     await page.waitForSelector('.msg-s-event-listitem', { timeout: 15000 });
     return { opened: true, threadId };
   } catch (err) {
     console.error(err.stack || err.message);
-    return describeThreadOpenFailure(err, threadId);
+    return describeThreadOpenFailure(err, threadId, {
+      messagingUiRendered: await messagingUiRendered(page),
+    });
+  }
+}
+
+async function openThreadWithBackoff(page, threadId, label) {
+  for (let attempt = 1; ; attempt += 1) {
+    const opened = await openThreadById(page, threadId);
+    if (!opened.rateLimited || attempt > RATE_LIMIT_RETRY_LIMIT || pauseRequested) {
+      return opened;
+    }
+    const waitMs = rateLimitBackoffMs(attempt, opened.retryAfterMs);
+    console.log(
+      `${label} — ${opened.reason}; waiting ${Math.round(waitMs / 1000)}s before retry ${attempt}/${RATE_LIMIT_RETRY_LIMIT}…`
+    );
+    await sleep(waitMs);
   }
 }
 
@@ -744,7 +799,9 @@ async function examineQueuedThreads(toScan, { tabs, selfName, csvPath, rows }) {
   while (remaining.length && !pauseRequested) {
     console.log(`Opened ${workers.length} scan tab(s).`);
     let lostError = null;
-    const shouldStop = () => pauseRequested || Boolean(lostError);
+    let rateLimited = null;
+    const shouldStop = () =>
+      pauseRequested || Boolean(lostError) || Boolean(rateLimited);
 
     await runPool(
       remaining,
@@ -757,10 +814,20 @@ async function examineQueuedThreads(toScan, { tabs, selfName, csvPath, rows }) {
         const worker = workers[workerIndex];
         const row = entry.row;
         try {
-          const opened = await openThreadById(worker, entry.threadId);
+          const opened = await openThreadWithBackoff(worker, entry.threadId, label);
           if (!opened.opened) {
             if (opened.lostContext) {
               lostError = opened.error || new Error(opened.reason);
+              return;
+            }
+            if (opened.rateLimited) {
+              rateLimited = opened;
+              return;
+            }
+            // The thread was never read, so leave the row alone for a later
+            // run instead of recording a verdict we did not observe.
+            if (opened.retryable) {
+              console.log(`${label} — left unread: ${opened.reason}`);
               return;
             }
             console.log(`${label} — skipped: ${opened.reason}`);
@@ -824,6 +891,19 @@ async function examineQueuedThreads(toScan, { tabs, selfName, csvPath, rows }) {
     );
 
     remaining = remaining.filter(unreadAfterLostContext);
+    // Retrying into a live rate limit only deepens it, so save and stop.
+    if (rateLimited && !pauseRequested) {
+      console.log(
+        `LinkedIn rate limited the search (HTTP ${rateLimited.status}) after ${RATE_LIMIT_RETRY_LIMIT} retries. ${remaining.length} conversation(s) were left unread so a later run can retry them.`
+      );
+      pauseRequested = true;
+      try {
+        persistPause();
+      } catch (err) {
+        console.error(err.stack || err.message);
+      }
+      break;
+    }
     if (!lostError || pauseRequested || !remaining.length) {
       break;
     }
