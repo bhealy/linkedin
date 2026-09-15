@@ -8,6 +8,7 @@ remove-connections-state.json
 remove-connections-results.json
 download-connections-state.json
 inbox-scan-state.json
+inbox-page-opens.json
 unrequited-love.csv
 connections-analytics.html
 .linkedin-session/

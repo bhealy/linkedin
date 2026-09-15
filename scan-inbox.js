@@ -41,6 +41,11 @@ const {
   rateLimitBackoffMs,
   unreadAfterLostContext,
 } = require('./lib/inbox-scan-recovery');
+const {
+  inspectPageOpens,
+  claimPageOpen,
+  formatWait,
+} = require('./lib/inbox-page-budget');
 const { extractThreadMessages } = require('./lib/thread-messages');
 
 const MESSAGING_URL = 'https://www.linkedin.com/messaging/';
@@ -63,6 +68,9 @@ const THREAD_PAUSE_MS = 1500;
 let activeBrowser = null;
 let pauseRequested = false;
 let persistPause = () => {};
+let pageBudgetOverride = false;
+let pageBudgetPace = false;
+let pageBudgetWarned = false;
 const PROFILE_PAUSE_MS = 2500;
 
 function parseArgs(argv) {
@@ -73,6 +81,8 @@ function parseArgs(argv) {
     cache: false,
     fresh: false,
     status: false,
+    overridePageBudget: false,
+    pacePageBudget: false,
     csv: OUTPUT_FILE,
   };
   for (let i = 2; i < argv.length; i += 1) {
@@ -91,6 +101,10 @@ function parseArgs(argv) {
       args.tabs = Number(argv[++i]);
     } else if (arg === '--csv' && argv[i + 1]) {
       args.csv = path.resolve(argv[++i]);
+    } else if (arg === '--override-page-budget') {
+      args.overridePageBudget = true;
+    } else if (arg === '--pace-page-budget') {
+      args.pacePageBudget = true;
     }
   }
   if (!Number.isInteger(args.days) || args.days < 1) {
@@ -611,7 +625,44 @@ async function collectConversations(
   };
 }
 
+async function claimConversationPage(label) {
+  while (!pauseRequested) {
+    const claim = claimPageOpen({
+      override: pageBudgetOverride,
+    });
+    if (claim.allowed) {
+      if (claim.overBudget && !pageBudgetWarned) {
+        pageBudgetWarned = true;
+        console.log(
+          'Page-open limit exceeded; continuing because override is on. LinkedIn may block this account if you keep going.'
+        );
+      }
+      return { allowed: true };
+    }
+    const waitLabel = claim.snapshot.waitLabel || formatWait(claim.waitMs);
+    if (!pageBudgetPace) {
+      console.log(
+        `Paused — opened ${claim.reason}. LinkedIn may block you if you keep opening conversation pages. Come back later to resume this search, or rerun with --override-page-budget.`
+      );
+      if (waitLabel) {
+        console.log(`The limit eases in ${waitLabel}.`);
+      }
+      pauseRequested = true;
+      return { allowed: false, paused: true };
+    }
+    console.log(
+      `${label || 'Search'} — page-open limit reached (${claim.reason}). Waiting ${waitLabel} before opening the next conversation…`
+    );
+    await sleep(Math.max(claim.waitMs, 1000));
+  }
+  return { allowed: false, paused: true };
+}
+
 async function openConversation(page, entry) {
+  const claimed = await claimConversationPage(entry.name);
+  if (!claimed.allowed) {
+    return { opened: false, budgetPaused: true, reason: 'page-open limit reached' };
+  }
   const previousUrl = page.url();
   let clicked;
   try {
@@ -712,6 +763,10 @@ async function messagingUiRendered(page) {
 async function openThreadById(page, threadId) {
   if (!threadId) {
     return { opened: false, reason: 'no thread id' };
+  }
+  const claimed = await claimConversationPage(threadId);
+  if (!claimed.allowed) {
+    return { opened: false, budgetPaused: true, reason: 'page-open limit reached' };
   }
   try {
     const response = await page.goto(threadUrl(threadId), {
@@ -819,6 +874,10 @@ async function examineQueuedThreads(toScan, { tabs, selfName, csvPath, rows }) {
           if (!opened.opened) {
             if (opened.lostContext) {
               lostError = opened.error || new Error(opened.reason);
+              return;
+            }
+            if (opened.budgetPaused) {
+              pauseRequested = true;
               return;
             }
             if (opened.rateLimited) {
@@ -1047,6 +1106,10 @@ function printStatus(rows, csvPath, state) {
   console.log(`Awaiting profile name: ${unresolved}`);
   console.log(`List cache complete:   ${state.cacheComplete ? 'yes' : 'no'}`);
   console.log(`Output file:           ${csvPath}`);
+  const budget = inspectPageOpens();
+  console.log(
+    `Conversation pages:    ${budget.lastHour.toLocaleString()}/${budget.hourLimit.toLocaleString()} last hour · ${budget.lastFourHours.toLocaleString()}/${budget.fourHourLimit.toLocaleString()} last 4 hours`
+  );
 }
 
 async function main() {
@@ -1060,6 +1123,8 @@ async function main() {
     return;
   }
 
+  pageBudgetOverride = Boolean(args.overridePageBudget);
+  pageBudgetPace = Boolean(args.pacePageBudget);
   snapshotAll();
   if (args.fresh) {
     removeProtectedFile(STATE_FILE);
@@ -1262,6 +1327,9 @@ async function main() {
           page = session.page;
           selfName = session.selfName;
           continue;
+        }
+        if (opened.budgetPaused) {
+          break;
         }
         console.log(`${entry.name} (${entry.activityText}) — skipped: ${opened.reason}`);
         applyExamineOutcome(row, { status: 'skipped' }, { activityText: entry.activityText });

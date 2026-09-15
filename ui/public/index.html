@@ -245,14 +245,18 @@
             <div class="step-heading"><div><p class="step-kicker">Discover</p><h2>Search for unrequited love</h2><p class="purpose">Find connections who started a conversation but never received a reply from you.</p></div><span class="step-state">Locked</span></div>
             <div class="sequence-note"><span>1</span><p><strong>Cache the conversation list first</strong><small>Search stays locked until this pass reaches the oldest conversation.</small></p><i>→</i><span>2</span><p><strong>Search recent messages</strong><small>Only new or changed conversations need to be read.</small></p></div>
             <p class="job-hint" id="inbox-cache-summary">Conversation cache: 0 · candidates: 0</p>
+            <div class="safety-banner" id="inbox-page-budget">
+              <strong>Conversation page opens</strong>
+              <span id="inbox-page-budget-copy">Opened 0 of 2,000 conversation pages in the last hour, and 0 of 4,000 in the last 4 hours. LinkedIn may block you if you go over these limits. Search anyway resumes unread threads. You can also schedule a slower scan with fewer tabs, or come back later.</span>
+            </div>
             <div class="form-grid thirds">
               <label>Days back<input id="inbox-days" type="number" min="1" value="30" data-tooltip="Only read conversations active within this many days."></label>
-              <label>Parallel tabs<input id="inbox-tabs" type="number" min="1" value="4" data-tooltip="How many Chromium tabs to use at once. Start with 4."></label>
+              <label>Parallel tabs<input id="inbox-tabs" type="number" min="1" value="4" data-tooltip="How many Chromium tabs to use at once. Start with 4. Use 1 for a slower scan."></label>
               <label>Thread limit <span class="hint">(optional)</span><input id="inbox-limit" type="number" min="1" placeholder="All" data-tooltip="Maximum conversations to open in this run."></label>
             </div>
             <label class="check" data-tooltip="Back up and reset the conversation CSV and scan state before running."><input id="inbox-fresh" type="checkbox"> Start with a fresh CSV and state</label>
             <p class="job-hint" id="inbox-status" hidden></p>
-            <div class="action-row"><button type="button" id="start-inbox-cache" data-tooltip="Page through the inbox via LinkedIn's conversation list API. A later run resumes from the last saved page instead of starting over.">Cache conversation list</button><button type="button" id="start-inbox-scan" class="primary" data-tooltip="Locked until the conversation list cache is complete. Then it opens only conversations that are new, changed, or unread.">Search for unrequited love <span>→</span></button><a class="card-help" href="/docs/readme.html#dive-inbox" target="_blank" rel="noopener">Inbox guide</a></div>
+            <div class="action-row"><button type="button" id="start-inbox-cache" data-tooltip="Page through the inbox via LinkedIn's conversation list API. A later run resumes from the last saved page instead of starting over.">Cache conversation list</button><button type="button" id="start-inbox-scan" class="primary" data-tooltip="Locked until the conversation list cache is complete. Then it opens only conversations that are new, changed, or unread.">Search for unrequited love <span>→</span></button><button type="button" id="schedule-inbox-scan" data-tooltip="Wait until the page-open limit eases, then resume with fewer tabs so LinkedIn is less likely to block you.">Schedule a slower scan</button><a class="card-help" href="/docs/readme.html#dive-inbox" target="_blank" rel="noopener">Inbox guide</a></div>
           </div>
         </section>
 
@@ -337,7 +341,23 @@
       </div>
       <div id="job-modal-body" class="current-job"></div>
       <div class="row modal-actions">
-        <button type="button" id="job-modal-cancel" data-tooltip="Stop this job now and keep the conversation cache already written. Run cache again to resume older pages.">Stop / pause for now</button>
+        <button type="button" id="job-modal-cancel" data-tooltip="Stop this job now and keep any CSV or cache progress already written. Inbox searches resume unread conversations; cache resumes from the last saved page.">Stop / pause for now</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="inbox-budget-modal" class="modal" hidden>
+    <div class="modal-backdrop" id="inbox-budget-backdrop"></div>
+    <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="inbox-budget-title">
+      <span class="status-pill" id="inbox-budget-pill">Limit reached</span>
+      <h2 id="inbox-budget-title">LinkedIn may block this account</h2>
+      <p id="inbox-budget-modal-copy">You have opened too many conversation pages recently. Come back later to resume unread threads, schedule a slower scan with fewer tabs, or override the limit.</p>
+      <label>Slower scan tabs<input id="inbox-slow-tabs" type="number" min="1" value="1" data-tooltip="How many Chromium tabs the scheduled slower scan should use. 1 is safest."></label>
+      <label class="check" data-tooltip="Ignore the 2,000/hour and 4,000/4-hour limits for this run. LinkedIn may still block the account."><input id="inbox-override-budget" type="checkbox"> Override the limit and search anyway</label>
+      <div class="row modal-actions">
+        <button type="button" id="inbox-budget-later">Come back later</button>
+        <button type="button" id="inbox-budget-schedule">Schedule a slower scan</button>
+        <button type="button" id="inbox-budget-override" class="danger">Search anyway</button>
       </div>
     </div>
   </div>

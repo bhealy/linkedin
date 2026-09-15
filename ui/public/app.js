@@ -848,6 +848,97 @@ function setInboxScanRunning(running, kind = 'scan') {
   }
 }
 
+function inboxScanPayload(extra = {}) {
+  const defaultTabs = document.getElementById('inbox-tabs').value;
+  const slowTabs = document.getElementById('inbox-slow-tabs').value || 1;
+  return {
+    password: password(),
+    days: document.getElementById('inbox-days').value,
+    tabs: extra.tabs != null ? extra.tabs : extra.pacePageBudget ? slowTabs : defaultTabs,
+    limit: document.getElementById('inbox-limit').value,
+    fresh: document.getElementById('inbox-fresh').checked,
+    overridePageBudget: Boolean(extra.overridePageBudget),
+    pacePageBudget: Boolean(extra.pacePageBudget),
+    scheduleWhenClear: Boolean(extra.scheduleWhenClear),
+  };
+}
+
+function formatClock(at) {
+  try {
+    return new Date(at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  } catch (err) {
+    console.error(err.stack || err.message);
+    return '';
+  }
+}
+
+function renderInboxPageBudget(status) {
+  const banner = document.getElementById('inbox-page-budget');
+  const copy = document.getElementById('inbox-page-budget-copy');
+  const budget = status && status.inboxPageBudget;
+  if (!banner || !copy || !budget) {
+    return;
+  }
+  banner.classList.toggle('blocked', Boolean(budget.blocked));
+  const hour = `${Number(budget.lastHour).toLocaleString()} of ${Number(budget.hourLimit).toLocaleString()}`;
+  const four = `${Number(budget.lastFourHours).toLocaleString()} of ${Number(budget.fourHourLimit).toLocaleString()}`;
+  let text = `Opened ${hour} conversation pages in the last hour, and ${four} in the last 4 hours. LinkedIn may block you if you go over these limits. Search resumes unread threads. You can schedule a slower scan with fewer tabs, or come back later.`;
+  if (status.scheduledInboxScan) {
+    const when = formatClock(status.scheduledInboxScan.startAt);
+    text += ` A slower scan (${status.scheduledInboxScan.tabs} tab${
+      status.scheduledInboxScan.tabs === 1 ? '' : 's'
+    }) is scheduled${when ? ` for ${when}` : ''}.`;
+  } else if (budget.blocked && budget.waitLabel) {
+    text += ` The limit eases in ${budget.waitLabel}.`;
+  }
+  copy.textContent = text;
+}
+
+function hideInboxBudgetModal() {
+  document.getElementById('inbox-budget-modal').hidden = true;
+}
+
+function showInboxBudgetModal(budget) {
+  const copy = document.getElementById('inbox-budget-modal-copy');
+  const wait = budget && budget.waitLabel ? ` The limit eases in ${budget.waitLabel}.` : '';
+  copy.textContent = `Opened ${Number(budget.lastHour).toLocaleString()} conversation pages in the last hour (limit ${Number(
+    budget.hourLimit
+  ).toLocaleString()}) and ${Number(budget.lastFourHours).toLocaleString()} in the last 4 hours (limit ${Number(
+    budget.fourHourLimit
+  ).toLocaleString()}). LinkedIn may block you if you keep going.${wait} Come back later to resume, schedule a slower scan with fewer tabs, or override.`;
+  document.getElementById('inbox-override-budget').checked = false;
+  document.getElementById('inbox-budget-modal').hidden = false;
+}
+
+async function startInboxScan(extra = {}) {
+  if (!latestStatus || !latestStatus.inboxCacheComplete) {
+    appendLog('Cache the conversation list first before searching for unrequited messages.');
+    return;
+  }
+  setInboxScanRunning(true, extra.scheduleWhenClear ? 'scan' : 'scan');
+  document.getElementById('start-inbox-scan').disabled = true;
+  document.getElementById('start-inbox-cache').disabled = true;
+  document.getElementById('schedule-inbox-scan').disabled = true;
+  try {
+    const result = await postJson('/api/jobs/inbox-scan', inboxScanPayload(extra));
+    if (result && result.scheduled) {
+      setInboxScanRunning(false);
+      appendLog(
+        `Slower scan scheduled${
+          result.scan && result.scan.waitLabel ? ` in ${result.scan.waitLabel}` : ''
+        }. Come back later or wait — unread conversations will resume.`
+      );
+      await refreshStatus();
+      return;
+    }
+    scrollJobsIntoView();
+  } catch (err) {
+    setInboxScanRunning(false);
+    appendLog(err.stack || err.message);
+    await refreshStatus();
+  }
+}
+
 function formatDuration(ms) {
   const seconds = Math.max(0, Math.floor((Number(ms) || 0) / 1000));
   if (seconds < 60) {
@@ -1357,23 +1448,31 @@ function renderStatus(status) {
           : ''
     }`;
   }
-  document.getElementById('stat-job').textContent = status.job ? status.job.name : 'idle';
+  renderInboxPageBudget(status);
+  document.getElementById('stat-job').textContent = status.job
+    ? status.job.name
+    : status.scheduledInboxScan
+      ? 'scheduled'
+      : 'idle';
   if (status.email && !emailEl.value) {
     emailEl.value = status.email;
   }
   const busy = Boolean(status.job);
+  const scheduled = Boolean(status.scheduledInboxScan);
   const analyticsRunning = Boolean(status.job && status.job.name === 'analytics');
   const inboxRunning = Boolean(
     status.job && (status.job.name === 'inbox-scan' || status.job.name === 'inbox-cache')
   );
   document.getElementById('start-download').disabled = busy;
   document.getElementById('start-inbox-scan').disabled =
-    busy || !status.inboxCacheComplete;
-  document.getElementById('start-inbox-cache').disabled = busy;
+    busy || scheduled || !status.inboxCacheComplete;
+  document.getElementById('start-inbox-cache').disabled = busy || scheduled;
+  document.getElementById('schedule-inbox-scan').disabled =
+    busy || scheduled || !status.inboxCacheComplete;
   document.getElementById('start-analytics').disabled = busy;
   document.getElementById('start-dry').disabled = busy;
   document.getElementById('start-execute').disabled = busy;
-  document.getElementById('cancel').disabled = !busy;
+  document.getElementById('cancel').disabled = !busy && !scheduled;
   setAnalyticsRunning(analyticsRunning);
   setInboxScanRunning(inboxRunning, status.job && status.job.name === 'inbox-cache' ? 'cache' : 'scan');
   renderJobs(status);
@@ -1439,33 +1538,64 @@ document.getElementById('start-download').addEventListener('click', async () => 
 });
 
 document.getElementById('start-inbox-scan').addEventListener('click', async () => {
+  const budget = latestStatus && latestStatus.inboxPageBudget;
+  if (budget && budget.blocked) {
+    showInboxBudgetModal(budget);
+    return;
+  }
+  await startInboxScan();
+});
+
+document.getElementById('schedule-inbox-scan').addEventListener('click', async () => {
   if (!latestStatus || !latestStatus.inboxCacheComplete) {
     appendLog('Cache the conversation list first before searching for unrequited messages.');
     return;
   }
-  setInboxScanRunning(true, 'scan');
-  document.getElementById('start-inbox-scan').disabled = true;
-  document.getElementById('start-inbox-cache').disabled = true;
-  scrollJobsIntoView();
-  try {
-    await postJson('/api/jobs/inbox-scan', {
-      password: password(),
-      days: document.getElementById('inbox-days').value,
-      tabs: document.getElementById('inbox-tabs').value,
-      limit: document.getElementById('inbox-limit').value,
-      fresh: document.getElementById('inbox-fresh').checked,
-    });
-  } catch (err) {
-    setInboxScanRunning(false);
-    appendLog(err.stack || err.message);
-    await refreshStatus();
+  const budget = latestStatus.inboxPageBudget;
+  if (budget && budget.blocked) {
+    showInboxBudgetModal(budget);
+    return;
   }
+  await startInboxScan({
+    pacePageBudget: true,
+    scheduleWhenClear: true,
+    tabs: document.getElementById('inbox-slow-tabs').value || 1,
+  });
+});
+
+document.getElementById('inbox-budget-later').addEventListener('click', () => {
+  hideInboxBudgetModal();
+  appendLog(
+    'Search paused. Come back later — unread conversations stay in the CSV and the next search resumes them.'
+  );
+});
+document.getElementById('inbox-budget-backdrop').addEventListener('click', hideInboxBudgetModal);
+document.getElementById('inbox-budget-schedule').addEventListener('click', async () => {
+  hideInboxBudgetModal();
+  await startInboxScan({
+    pacePageBudget: true,
+    scheduleWhenClear: true,
+    tabs: document.getElementById('inbox-slow-tabs').value || 1,
+  });
+});
+document.getElementById('inbox-budget-override').addEventListener('click', async () => {
+  const confirmed =
+    document.getElementById('inbox-override-budget').checked ||
+    window.confirm(
+      'Override the page-open limit? LinkedIn may block this account if you keep opening conversations.'
+    );
+  if (!confirmed) {
+    return;
+  }
+  hideInboxBudgetModal();
+  await startInboxScan({ overridePageBudget: true });
 });
 
 document.getElementById('start-inbox-cache').addEventListener('click', async () => {
   setInboxScanRunning(true, 'cache');
   document.getElementById('start-inbox-scan').disabled = true;
   document.getElementById('start-inbox-cache').disabled = true;
+  document.getElementById('schedule-inbox-scan').disabled = true;
   scrollJobsIntoView();
   try {
     await postJson('/api/jobs/inbox-cache', {

@@ -25,6 +25,7 @@ const {
 } = require('../lib/source-protection');
 const { scrapeThreadMessages } = require('../lib/thread-messages');
 const { createJobEtaTracker, formatEtaRemaining } = require('../lib/job-eta');
+const { inspectPageOpens } = require('../lib/inbox-page-budget');
 
 const ROOT = path.join(__dirname, '..');
 const HOST = '127.0.0.1';
@@ -44,6 +45,8 @@ const MAX_LOG_LINES = 4000;
 const MAX_JOB_HISTORY = 10;
 const sseClients = new Set();
 let currentJob = null;
+let scheduledInboxScan = null;
+let scheduledInboxTimer = null;
 const logLines = [];
 const jobHistory = [];
 
@@ -274,10 +277,25 @@ function summariseJobOutput(job) {
     if (output) summary.rows.push({ label: 'Output file', value: output[1].trim() });
     const oldest = pickLog(log, /Oldest conversation:\s+(.+)/i);
     if (oldest) summary.rows.push({ label: 'Oldest conversation', value: oldest[1].trim() });
-    if (paused) {
+    if (paused && job.name === 'inbox-cache') {
       summary.rows.push({
         label: 'Paused',
         value: 'Progress saved — run cache again to resume older pages',
+      });
+    }
+    const budgetPaused = pickLog(
+      log,
+      /Paused — opened (.+)\. LinkedIn may block you/i
+    );
+    if (budgetPaused) {
+      summary.rows.push({
+        label: 'Paused',
+        value: `${budgetPaused[1]} — come back later to resume, or override the page-open limit`,
+      });
+    } else if (paused && job.name === 'inbox-scan') {
+      summary.rows.push({
+        label: 'Paused',
+        value: 'Progress saved — search again to resume unread conversations',
       });
     }
     const throttled = pickLog(
@@ -410,6 +428,8 @@ function statusPayload() {
     analyticsExists: fs.existsSync(ANALYTICS_HTML),
     job: jobSnapshot(),
     history: jobHistory,
+    inboxPageBudget: inspectPageOpens(),
+    scheduledInboxScan,
   };
 }
 
@@ -521,6 +541,112 @@ function parsePositiveInt(value, label) {
     throw new Error(`${label} must be a positive number.`);
   }
   return Math.floor(n);
+}
+
+function clearScheduledInboxScan(reason) {
+  if (scheduledInboxTimer) {
+    clearTimeout(scheduledInboxTimer);
+  }
+  scheduledInboxTimer = null;
+  const previous = scheduledInboxScan;
+  scheduledInboxScan = null;
+  if (previous && reason) {
+    appendLog(reason);
+  }
+  broadcast({ type: 'status', status: statusPayload() });
+  return Boolean(previous);
+}
+
+function buildInboxScanJob(body) {
+  const cacheState = inboxCsvStats();
+  if (!cacheState.inboxCacheComplete) {
+    const err = new Error(
+      'Cache the conversation list first before searching for unrequited messages.'
+    );
+    err.statusCode = 400;
+    throw err;
+  }
+  const days = parsePositiveInt(body.days, '--days') || 30;
+  const args = [path.join(ROOT, 'scan-inbox.js'), '--days', String(days)];
+  const detailParts = [`last ${days} day${days === 1 ? '' : 's'}`];
+  const tabs = parsePositiveInt(body.tabs, '--tabs') || 4;
+  args.push('--tabs', String(tabs));
+  detailParts.push(`${tabs} tab${tabs === 1 ? '' : 's'}`);
+  const limit = parsePositiveInt(body.limit, '--limit');
+  if (limit) {
+    args.push('--limit', String(limit));
+    detailParts.push(`limit ${limit.toLocaleString()} threads`);
+  }
+  if (body.fresh) {
+    args.push('--fresh');
+    detailParts.push('fresh CSV and state');
+  }
+  if (body.overridePageBudget) {
+    args.push('--override-page-budget');
+    detailParts.push('page-open limit overridden');
+  }
+  if (body.pacePageBudget) {
+    args.push('--pace-page-budget');
+    detailParts.push('pacing page opens');
+  }
+  return {
+    args,
+    detail: detailParts.join(' · '),
+    password: body.password,
+    tabs,
+  };
+}
+
+function startInboxScanJob(body) {
+  const built = buildInboxScanJob(body);
+  return startJob({
+    name: 'inbox-scan',
+    label: 'Search for unrequited love',
+    detail: built.detail,
+    args: built.args,
+    password: built.password,
+  });
+}
+
+function scheduleInboxScanJob(body) {
+  if (currentJob) {
+    const err = new Error('A job is already running. Pause it first.');
+    err.statusCode = 409;
+    throw err;
+  }
+  clearScheduledInboxScan();
+  const built = buildInboxScanJob(body);
+  const budget = inspectPageOpens();
+  const delayMs = body.overridePageBudget ? 0 : budget.waitMs;
+  if (delayMs <= 0) {
+    return { ok: true, job: startInboxScanJob(body), scheduled: false };
+  }
+  const startAt = Date.now() + delayMs;
+  clearScheduledInboxScan();
+  scheduledInboxScan = {
+    startAt,
+    waitMs: delayMs,
+    waitLabel: budget.waitLabel,
+    tabs: built.tabs,
+    detail: built.detail,
+    label: 'Search for unrequited love',
+  };
+  scheduledInboxTimer = setTimeout(() => {
+    scheduledInboxTimer = null;
+    scheduledInboxScan = null;
+    try {
+      startInboxScanJob(body);
+    } catch (err) {
+      console.error(err.stack || err.message);
+      appendLog(err.stack || err.message);
+      broadcast({ type: 'status', status: statusPayload() });
+    }
+  }, delayMs);
+  appendLog(
+    `Scheduled a slower unrequited search (${built.tabs} tab${built.tabs === 1 ? '' : 's'}) to start in ${budget.waitLabel}. Progress already saved will resume.`
+  );
+  broadcast({ type: 'status', status: statusPayload() });
+  return { ok: true, scheduled: true, scan: scheduledInboxScan };
 }
 
 const app = express();
@@ -762,40 +888,14 @@ app.post('/api/jobs/analytics', (req, res) => {
 app.post('/api/jobs/inbox-scan', (req, res) => {
   try {
     const body = req.body || {};
-    const cacheState = inboxCsvStats();
-    if (!cacheState.inboxCacheComplete) {
-      const err = new Error(
-        'Cache the conversation list first before searching for unrequited messages.'
-      );
-      err.statusCode = 400;
-      throw err;
+    if (body.scheduleWhenClear) {
+      res.json(scheduleInboxScanJob(body));
+      return;
     }
-    const days = parsePositiveInt(body.days, '--days') || 30;
-    const args = [
-      path.join(ROOT, 'scan-inbox.js'),
-      '--days',
-      String(days),
-    ];
-    const detailParts = [`last ${days} day${days === 1 ? '' : 's'}`];
-    const tabs = parsePositiveInt(body.tabs, '--tabs') || 4;
-    args.push('--tabs', String(tabs));
-    detailParts.push(`${tabs} tab${tabs === 1 ? '' : 's'}`);
-    const limit = parsePositiveInt(body.limit, '--limit');
-    if (limit) {
-      args.push('--limit', String(limit));
-      detailParts.push(`limit ${limit.toLocaleString()} threads`);
+    if (scheduledInboxScan) {
+      clearScheduledInboxScan('Cancelled the scheduled slower scan because a search started now.');
     }
-    if (body.fresh) {
-      args.push('--fresh');
-      detailParts.push('fresh CSV and state');
-    }
-    const job = startJob({
-      name: 'inbox-scan',
-      label: 'Search for unrequited love',
-      detail: detailParts.join(' · '),
-      args,
-      password: body.password,
-    });
+    const job = startInboxScanJob(body);
     res.json({ ok: true, job });
   } catch (err) {
     console.error(err.stack || err.message);
@@ -894,9 +994,17 @@ app.post('/api/jobs/remove', (req, res) => {
 });
 
 app.post('/api/jobs/cancel', (_req, res) => {
+  if (scheduledInboxScan && !currentJob) {
+    clearScheduledInboxScan('Cancelled the scheduled slower scan.');
+    res.json({ ok: true, scheduled: false });
+    return;
+  }
   if (!currentJob) {
     res.status(409).json({ error: 'No job is running.' });
     return;
+  }
+  if (scheduledInboxScan) {
+    clearScheduledInboxScan('Cancelled the scheduled slower scan.');
   }
   appendLog('Pause requested…');
   stopJob('SIGTERM');
