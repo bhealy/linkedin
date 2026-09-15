@@ -882,7 +882,7 @@ function renderInboxPageBudget(status) {
   banner.classList.toggle('blocked', Boolean(budget.blocked));
   const hour = `${Number(budget.lastHour).toLocaleString()} of ${Number(budget.hourLimit).toLocaleString()}`;
   const four = `${Number(budget.lastFourHours).toLocaleString()} of ${Number(budget.fourHourLimit).toLocaleString()}`;
-  let text = `Opened ${hour} conversation pages in the last hour, and ${four} in the last 4 hours. LinkedIn may block you if you go over these limits. Search resumes unread threads. You can schedule a slower scan with fewer tabs, or come back later.`;
+  let text = `Opened ${hour} LinkedIn pages in the last hour, and ${four} in the last 4 hours. LinkedIn may block you if you go over these limits. Search resumes unread threads. You can schedule a slower scan with fewer tabs, or come back later.`;
   if (status.scheduledInboxScan) {
     const when = formatClock(status.scheduledInboxScan.startAt);
     text += ` A slower scan (${status.scheduledInboxScan.tabs} tab${
@@ -901,7 +901,7 @@ function hideInboxBudgetModal() {
 function showInboxBudgetModal(budget) {
   const copy = document.getElementById('inbox-budget-modal-copy');
   const wait = budget && budget.waitLabel ? ` The limit eases in ${budget.waitLabel}.` : '';
-  copy.textContent = `Opened ${Number(budget.lastHour).toLocaleString()} conversation pages in the last hour (limit ${Number(
+  copy.textContent = `Opened ${Number(budget.lastHour).toLocaleString()} LinkedIn pages in the last hour (limit ${Number(
     budget.hourLimit
   ).toLocaleString()}) and ${Number(budget.lastFourHours).toLocaleString()} in the last 4 hours (limit ${Number(
     budget.fourHourLimit
@@ -1582,7 +1582,7 @@ document.getElementById('inbox-budget-override').addEventListener('click', async
   const confirmed =
     document.getElementById('inbox-override-budget').checked ||
     window.confirm(
-      'Override the page-open limit? LinkedIn may block this account if you keep opening conversations.'
+      'Override the page-open limit? LinkedIn may block this account if you keep opening pages.'
     );
   if (!confirmed) {
     return;

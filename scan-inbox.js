@@ -625,7 +625,7 @@ async function collectConversations(
   };
 }
 
-async function claimConversationPage(label) {
+async function claimPageBudget(label) {
   while (!pauseRequested) {
     const claim = claimPageOpen({
       override: pageBudgetOverride,
@@ -642,7 +642,7 @@ async function claimConversationPage(label) {
     const waitLabel = claim.snapshot.waitLabel || formatWait(claim.waitMs);
     if (!pageBudgetPace) {
       console.log(
-        `Paused — opened ${claim.reason}. LinkedIn may block you if you keep opening conversation pages. Come back later to resume this search, or rerun with --override-page-budget.`
+        `Paused — opened ${claim.reason}. LinkedIn may block you if you keep opening pages. Come back later to resume this search, or rerun with --override-page-budget.`
       );
       if (waitLabel) {
         console.log(`The limit eases in ${waitLabel}.`);
@@ -651,7 +651,7 @@ async function claimConversationPage(label) {
       return { allowed: false, paused: true };
     }
     console.log(
-      `${label || 'Search'} — page-open limit reached (${claim.reason}). Waiting ${waitLabel} before opening the next conversation…`
+      `${label || 'Search'} — page-open limit reached (${claim.reason}). Waiting ${waitLabel} before opening the next page…`
     );
     await sleep(Math.max(claim.waitMs, 1000));
   }
@@ -659,7 +659,7 @@ async function claimConversationPage(label) {
 }
 
 async function openConversation(page, entry) {
-  const claimed = await claimConversationPage(entry.name);
+  const claimed = await claimPageBudget(entry.name);
   if (!claimed.allowed) {
     return { opened: false, budgetPaused: true, reason: 'page-open limit reached' };
   }
@@ -764,7 +764,7 @@ async function openThreadById(page, threadId) {
   if (!threadId) {
     return { opened: false, reason: 'no thread id' };
   }
-  const claimed = await claimConversationPage(threadId);
+  const claimed = await claimPageBudget(threadId);
   if (!claimed.allowed) {
     return { opened: false, budgetPaused: true, reason: 'page-open limit reached' };
   }
@@ -1061,6 +1061,12 @@ async function resolveVanityNames(pages, rows, csvPath) {
 
   await runPool(pending, workers.length, async (row, _index, workerIndex) => {
     const page = workers[workerIndex];
+    // Profile views count against the same LinkedIn budget as conversation
+    // pages; unresolved rows are picked up by the next run.
+    const claimed = await claimPageBudget(row.name);
+    if (!claimed.allowed) {
+      return;
+    }
     try {
       await page.goto(row.profileUrl, {
         waitUntil: 'domcontentloaded',
@@ -1108,7 +1114,7 @@ function printStatus(rows, csvPath, state) {
   console.log(`Output file:           ${csvPath}`);
   const budget = inspectPageOpens();
   console.log(
-    `Conversation pages:    ${budget.lastHour.toLocaleString()}/${budget.hourLimit.toLocaleString()} last hour · ${budget.lastFourHours.toLocaleString()}/${budget.fourHourLimit.toLocaleString()} last 4 hours`
+    `LinkedIn pages:        ${budget.lastHour.toLocaleString()}/${budget.hourLimit.toLocaleString()} last hour · ${budget.lastFourHours.toLocaleString()}/${budget.fourHourLimit.toLocaleString()} last 4 hours`
   );
 }
 

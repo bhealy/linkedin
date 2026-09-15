@@ -246,8 +246,8 @@
             <div class="sequence-note"><span>1</span><p><strong>Cache the conversation list first</strong><small>Search stays locked until this pass reaches the oldest conversation.</small></p><i>→</i><span>2</span><p><strong>Search recent messages</strong><small>Only new or changed conversations need to be read.</small></p></div>
             <p class="job-hint" id="inbox-cache-summary">Conversation cache: 0 · candidates: 0</p>
             <div class="safety-banner" id="inbox-page-budget">
-              <strong>Conversation page opens</strong>
-              <span id="inbox-page-budget-copy">Opened 0 of 2,000 conversation pages in the last hour, and 0 of 4,000 in the last 4 hours. LinkedIn may block you if you go over these limits. Search anyway resumes unread threads. You can also schedule a slower scan with fewer tabs, or come back later.</span>
+              <strong>LinkedIn page opens</strong>
+              <span id="inbox-page-budget-copy">Opened 0 of 2,000 LinkedIn pages in the last hour, and 0 of 4,000 in the last 4 hours. LinkedIn may block you if you go over these limits. Search anyway resumes unread threads. You can also schedule a slower scan with fewer tabs, or come back later.</span>
             </div>
             <div class="form-grid thirds">
               <label>Days back<input id="inbox-days" type="number" min="1" value="30" data-tooltip="Only read conversations active within this many days."></label>
@@ -351,7 +351,7 @@
     <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="inbox-budget-title">
       <span class="status-pill" id="inbox-budget-pill">Limit reached</span>
       <h2 id="inbox-budget-title">LinkedIn may block this account</h2>
-      <p id="inbox-budget-modal-copy">You have opened too many conversation pages recently. Come back later to resume unread threads, schedule a slower scan with fewer tabs, or override the limit.</p>
+      <p id="inbox-budget-modal-copy">You have opened too many LinkedIn pages recently. Come back later to resume unread threads, schedule a slower scan with fewer tabs, or override the limit.</p>
       <label>Slower scan tabs<input id="inbox-slow-tabs" type="number" min="1" value="1" data-tooltip="How many Chrome tabs the scheduled slower scan should use. 1 is safest."></label>
       <label class="check" data-tooltip="Ignore the 2,000/hour and 4,000/4-hour limits for this run. LinkedIn may still block the account."><input id="inbox-override-budget" type="checkbox"> Override the limit and search anyway</label>
       <div class="row modal-actions">
